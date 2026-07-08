@@ -1,0 +1,11 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# Toutes les routes non trouvées renvoient vers l'app (application monopage React).
+# Les fonctions et les fichiers statiques ne sont pas concernés.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
