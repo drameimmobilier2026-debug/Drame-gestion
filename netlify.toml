@@ -3,6 +3,11 @@
   publish = "dist"
   functions = "netlify/functions"
 
+[build.environment]
+  # fetch() n'existe nativement qu'à partir de Node 18 — sans ça, la fonction de l'assistant
+  # vocal peut planter silencieusement (Netlify renvoie alors un 502 générique).
+  NODE_VERSION = "20"
+
 # Toutes les routes non trouvées renvoient vers l'app (application monopage React).
 # Les fonctions et les fichiers statiques ne sont pas concernés.
 [[redirects]]

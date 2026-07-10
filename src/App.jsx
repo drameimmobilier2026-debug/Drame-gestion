@@ -2136,7 +2136,11 @@ function genererVersementPdf(versement, data) {
 
   for (const g of groupesImmeubles) {
     if (!g.immeuble) continue;
-    const nbAttenduIm = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue").length;
+    const locauxImmeuble = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue");
+    const nbAttenduIm = locauxImmeuble.length;
+    // Locaux occupés de cet immeuble n'ayant PAS payé ce cycle — liste séparée, jamais mélangée
+    // avec ceux qui ont payé : seuls les non-payeurs y figurent.
+    const nonPayes = locauxImmeuble.filter((l) => !g.items.some((x) => x.localId === l.id));
     const modeLabel = g.immeuble.mode === "avance" ? "Terme en avance" : "Terme échu";
     const moisLabel = g.immeuble.mode === "avance" ? moisNom(versement.mois) : moisNom(shiftMonth(versement.mois, -1));
 
@@ -2157,6 +2161,20 @@ function genererVersementPdf(versement, data) {
         y -= 15;
       }
     }
+
+    if (nonPayes.length > 0) {
+      y -= 4;
+      ops.push({ type: "text", x: 58, y, size: 8, font: "B", color: [0.6, 0.13, 0.13], text: `Non payé ce cycle (${nonPayes.length}) :` });
+      y -= 14;
+      for (const l of nonPayes) {
+        const t = data.locataires.find((tt) => tt.localId === l.id);
+        ops.push({ type: "text", x: 58, y, size: 9, font: "R", color: [0.6, 0.2, 0.2], text: t ? `${t.prenom} ${t.nom}` : "— (vacant)" });
+        ops.push({ type: "text", x: 280, y, size: 9, font: "R", color: [0.65, 0.35, 0.35], text: l.nom });
+        ops.push({ type: "text", x: 460, y, size: 9, font: "R", color: [0.6, 0.2, 0.2], text: money(l.loyer + (l.charges || 0)) });
+        y -= 15;
+      }
+    }
+
     ops.push({ type: "text", x: 400, y, size: 8, font: "B", color: [0.2, 0.2, 0.2], text: `Sous-total : ${money(g.total)}` });
     y -= 20;
   }
@@ -2253,7 +2271,10 @@ function VersementRecuModal({ versement, data, onClose }) {
               {/* Détail par immeuble — Ex EDG Damakania / Damakania 142, dynamique et jamais figé en dur. */}
               <div className="mt-5 space-y-3">
                 {groupesImmeubles.map((g) => {
-                  const nbAttenduIm = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue").length;
+                  const locauxImmeuble = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue");
+                  const nbAttenduIm = locauxImmeuble.length;
+                  // Seuls les locaux occupés SANS paiement ce cycle — jamais mélangés avec ceux qui ont payé.
+                  const nonPayes = locauxImmeuble.filter((l) => !g.items.some((x) => x.localId === l.id));
                   const modeLabel = g.immeuble.mode === "avance" ? "Terme en avance" : "Terme échu";
                   const moisLabel = g.immeuble.mode === "avance" ? moisNom(versement.mois) : moisNom(shiftMonth(versement.mois, -1));
                   const complet = g.items.length === nbAttenduIm && nbAttenduIm > 0;
@@ -2276,6 +2297,17 @@ function VersementRecuModal({ versement, data, onClose }) {
                           {g.items.map((x) => (
                             <div key={x.id} className="flex items-center justify-between px-4 py-2 text-sm"><span className="min-w-0 truncate text-slate-700">{nom(x.locataireId)} <span className="text-slate-400">· {localNom(x.localId)}</span></span><span className="shrink-0 font-medium tabular-nums text-slate-900">{money(x.montant)}</span></div>
                           ))}
+                        </div>
+                      )}
+                      {nonPayes.length > 0 && (
+                        <div className="border-t border-rose-100 bg-rose-50/50">
+                          <p className="px-4 pt-2 text-[11px] font-semibold uppercase tracking-wide text-rose-600">Non payé ce cycle ({nonPayes.length})</p>
+                          <div className="divide-y divide-rose-100/70 pb-1">
+                            {nonPayes.map((l) => {
+                              const t = data.locataires.find((tt) => tt.localId === l.id);
+                              return <div key={l.id} className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="min-w-0 truncate text-rose-700">{t ? `${t.prenom} ${t.nom}` : "— (vacant)"} <span className="text-rose-400">· {l.nom}</span></span><span className="shrink-0 font-medium tabular-nums text-rose-600">{money(l.loyer + (l.charges || 0))}</span></div>;
+                            })}
+                          </div>
                         </div>
                       )}
                       <div className="flex justify-between border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-xs"><span className="font-medium text-slate-500">Sous-total</span><span className="font-semibold tabular-nums text-slate-700">{money(g.total)}</span></div>
@@ -2453,7 +2485,9 @@ function Versements({ data, setData, go }) {
 function MesCommissions({ data, setData, go, isDark }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editId, setEditId] = useState(null); // "new" ou l'id d'une consommation en cours de modification
-  const [filtreAnnee, setFiltreAnnee] = useState("all");
+  const [filtrePeriode, setFiltrePeriode] = useState("all"); // "all" | "2026" (année) | "2026-07" (mois précis)
+  const [filtreStatut, setFiltreStatut] = useState("all"); // bascule au clic sur les cartes de synthèse
+  const consoRef = useRef(null);
   const blankConso = { date: new Date().toISOString().slice(0, 10), montant: "", motif: "", categorie: CONSO_CATS[0] };
   const [form, setForm] = useState(blankConso);
 
@@ -2461,7 +2495,7 @@ function MesCommissions({ data, setData, go, isDark }) {
   const gestionnaire = p.gestionnaire || "Sanoussy DRAMÉ";
 
   // Historique complet (non filtré) — sert au solde, qui est toujours une valeur globale réelle,
-  // jamais limitée à une année choisie (sinon le chiffre affiché mentirait sur ce qu'il reste).
+  // jamais limitée à une période choisie (sinon le chiffre affiché mentirait sur ce qu'il reste).
   // Règle métier : la commission n'est réellement perçue que lorsque TOUS les locataires du cycle
   // ont payé (c.complete) — un versement marqué fait sur une collecte partielle ne compte pas encore.
   const lignesToutes = (data.versements || []).slice().sort((a, b) => b.mois.localeCompare(a.mois)).map((v) => ({ v, c: calcVersement(v, data) }));
@@ -2474,29 +2508,42 @@ function MesCommissions({ data, setData, go, isDark }) {
   // confondus — distinct de "Consommée" : ceci est de l'argent avancé, pas dépensé.
   const totalComplementToutes = lignesToutes.reduce((s, l) => s + (l.c.complement || 0), 0);
 
-  // Années disponibles pour le filtre, déduites des vraies données (versements + consommations).
-  const annees = Array.from(new Set([...lignesToutes.map((l) => l.v.mois.slice(0, 4)), ...consommationsToutes.map((c) => c.date.slice(0, 4))])).sort((a, b) => b.localeCompare(a));
+  // Périodes disponibles pour le filtre, déduites des vraies données — à la fois par année
+  // (vue large) et par mois précis (vue fine), plutôt qu'une seule granularité.
+  const anneesDispo = Array.from(new Set([...lignesToutes.map((l) => l.v.mois.slice(0, 4)), ...consommationsToutes.map((c) => c.date.slice(0, 4))])).sort((a, b) => b.localeCompare(a));
+  const moisDispo = Array.from(new Set([...lignesToutes.map((l) => l.v.mois), ...consommationsToutes.map((c) => c.date.slice(0, 7))])).sort((a, b) => b.localeCompare(a));
+  // Texte affiché pour la période choisie, correctement formaté qu'il s'agisse d'une année
+  // ("2026") ou d'un mois précis ("2026-07" -> "Juillet 2026") — jamais affiché brut.
+  const labelPeriode = (per) => (per === "all" ? "" : /^\d{4}-\d{2}$/.test(per) ? `${cap(moisNom(per))} ${per.slice(0, 4)}` : `Année ${per}`);
 
-  // Vues filtrées par année, pour les listes détaillées et les cartes de synthèse.
+  // Vues filtrées par période, pour les listes détaillées et les cartes de synthèse.
   // Trois états, pas deux : une collecte partielle marquée "versé" n'est ni vraiment déduite,
   // ni simplement "en attente" — elle mérite son propre signalement pour ne pas induire en erreur.
-  const lignes = filtreAnnee === "all" ? lignesToutes : lignesToutes.filter((l) => l.v.mois.startsWith(filtreAnnee));
-  const consommations = filtreAnnee === "all" ? consommationsToutes : consommationsToutes.filter((c) => c.date.startsWith(filtreAnnee));
-  const deduites = lignes.filter((l) => l.v.statut === "verse" && l.c.complete);
-  const incompletes = lignes.filter((l) => l.v.statut === "verse" && !l.c.complete);
-  const nonDeduites = lignes.filter((l) => l.v.statut !== "verse");
+  const lignesPeriode = filtrePeriode === "all" ? lignesToutes : lignesToutes.filter((l) => l.v.mois.startsWith(filtrePeriode));
+  const consommations = filtrePeriode === "all" ? consommationsToutes : consommationsToutes.filter((c) => c.date.startsWith(filtrePeriode));
+  const deduites = lignesPeriode.filter((l) => l.v.statut === "verse" && l.c.complete);
+  const incompletes = lignesPeriode.filter((l) => l.v.statut === "verse" && !l.c.complete);
+  const nonDeduites = lignesPeriode.filter((l) => l.v.statut !== "verse");
+  const avecComplement = lignesPeriode.filter((l) => l.c.complement > 0);
   const totalDeduit = deduites.reduce((s, l) => s + l.c.commission, 0);
   const totalNonDeduit = nonDeduites.reduce((s, l) => s + l.c.commission, 0);
   const totalConsomme = consommations.reduce((s, c) => s + c.montant, 0);
-  const totalComplement = lignes.reduce((s, l) => s + (l.c.complement || 0), 0);
+  const totalComplement = avecComplement.reduce((s, l) => s + (l.c.complement || 0), 0);
 
-  // Répartition des consommations par catégorie, pour la période filtrée.
+  // Clic sur une carte de synthèse -> filtre l'historique ci-dessous sur ce statut précis
+  // (un second clic sur la même carte annule le filtre). Rend les cartes réellement utiles,
+  // pas seulement décoratives.
+  const basculerStatut = (s) => setFiltreStatut((cur) => (cur === s ? "all" : s));
+  const lignesAffichees = filtreStatut === "all" ? lignesPeriode : filtreStatut === "deduite" ? deduites : filtreStatut === "nonDeduite" ? nonDeduites : filtreStatut === "incomplete" ? incompletes : filtreStatut === "complement" ? avecComplement : lignesPeriode;
+  const carteActive = "ring-2 ring-offset-1";
+
+  // Répartition des consommations par catégorie, pour la période affichée.
   const parCategorie = {};
   consommations.forEach((c) => { const cat = c.categorie || "Autre"; parCategorie[cat] = (parCategorie[cat] || 0) + c.montant; });
   const categoriesTriees = Object.entries(parCategorie).sort((a, b) => b[1] - a[1]);
 
   // Évolution des 6 derniers mois — toujours sur cette fenêtre glissante, indépendamment du filtre
-  // par année ci-dessus (qui concerne l'historique détaillé, pas cet aperçu de tendance récente).
+  // de période ci-dessus (qui concerne l'historique détaillé, pas cet aperçu de tendance récente).
   const serieMois = Array.from({ length: 6 }, (_, i) => shiftMonth(curMonth, -(5 - i)));
   const serieCommission = serieMois.map((m) => {
     const v = (data.versements || []).find((x) => x.mois === m);
@@ -2518,6 +2565,7 @@ function MesCommissions({ data, setData, go, isDark }) {
     setAddOpen(false);
   };
   const supprimerConsommation = (id) => setData((d) => ({ ...d, consommations: (d.consommations || []).filter((c) => c.id !== id) }));
+  const allerAuxConsommations = () => consoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   return (
     <div className="space-y-5">
@@ -2526,56 +2574,58 @@ function MesCommissions({ data, setData, go, isDark }) {
           <h2 className="font-display text-xl font-semibold text-slate-900">Mes commissions</h2>
           <p className="mt-0.5 text-sm text-slate-500">Vos commissions de gestion, et ce que vous en avez consommé — {gestionnaire}.</p>
         </div>
-        {annees.length > 0 && (
-          <select className={`${inputCls} w-auto`} value={filtreAnnee} onChange={(e) => setFiltreAnnee(e.target.value)}>
-            <option value="all">Toutes les années</option>
-            {annees.map((a) => <option key={a} value={a}>{a}</option>)}
+        {(anneesDispo.length > 0 || moisDispo.length > 0) && (
+          <select className={`${inputCls} w-auto`} value={filtrePeriode} onChange={(e) => { setFiltrePeriode(e.target.value); setFiltreStatut("all"); }}>
+            <option value="all">Toutes les périodes</option>
+            <optgroup label="Par année">{anneesDispo.map((a) => <option key={a} value={a}>{a}</option>)}</optgroup>
+            <optgroup label="Par mois">{moisDispo.map((m) => <option key={m} value={m}>{cap(moisNom(m))} {m.slice(0, 4)}</option>)}</optgroup>
           </select>
         )}
       </div>
 
-      {/* Solde disponible : toujours global, jamais filtré par année — c'est la question centrale. */}
+      {/* Solde disponible : toujours global, jamais filtré par période — c'est la question centrale. */}
       <div className={`rounded-2xl border p-5 shadow-sm ${solde < 0 ? "border-rose-200 bg-rose-50" : "border-teal-700 bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-700"}`}>
         <p className={`text-xs font-medium uppercase tracking-wide ${solde < 0 ? "text-rose-600" : "text-teal-100"}`}>Solde disponible</p>
         <p className={`mt-1 font-display text-3xl font-bold tabular-nums sm:text-4xl ${solde < 0 ? "text-rose-700" : "text-white"}`}>{money(solde)}</p>
         <p className={`mt-1.5 text-xs ${solde < 0 ? "text-rose-600" : "text-teal-100/80"}`}>
-          {solde < 0 ? "Attention : vous avez consommé plus que ce que vous avez perçu." : "Commissions déjà déduites, moins ce que vous avez consommé — toutes années confondues."}
+          {solde < 0 ? "Attention : vous avez consommé plus que ce que vous avez perçu." : "Commissions déjà déduites, moins ce que vous avez consommé — toutes périodes confondues."}
         </p>
       </div>
 
       {incompletes.length > 0 && (
-        <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4">
+        <button onClick={() => basculerStatut("incomplete")} className={`w-full rounded-2xl border border-orange-200 bg-orange-50 p-4 text-left transition hover:bg-orange-100 ${filtreStatut === "incomplete" ? carteActive + " ring-orange-400" : ""}`}>
           <p className="flex items-center gap-1.5 text-sm font-semibold text-orange-800"><AlertTriangle size={15} /> {incompletes.length} versement(s) marqué(s) fait(s) sans collecte complète</p>
           <p className="mt-1 text-xs text-orange-700">Tant que tous les locataires du cycle n'ont pas payé, cette commission n'est pas comptée dans votre solde disponible. Vérifiez : {incompletes.map((l) => `${cap(moisNom(l.v.mois))} (${l.c.nbPayes}/${l.c.nbAttendu} payés)`).join(", ")}.</p>
-        </div>
+        </button>
       )}
 
+      {/* Les 4 cartes filtrent l'historique ci-dessous au clic — un second clic annule le filtre. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+        <button onClick={() => basculerStatut("deduite")} className={`rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left transition hover:bg-emerald-100 ${filtreStatut === "deduite" ? carteActive + " ring-emerald-400" : ""}`}>
           <p className="text-xs font-medium text-emerald-700">Déjà déduite</p>
           <p className="mt-1 font-display text-lg font-bold tabular-nums text-emerald-700 sm:text-xl">{money(totalDeduit)}</p>
-          <p className="mt-0.5 text-[11px] text-emerald-600">{deduites.length} versement(s), collecte complète{filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
-        </div>
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+          <p className="mt-0.5 text-[11px] text-emerald-600">{deduites.length === 1 ? cap(moisNom(deduites[0].v.mois)) + " " + deduites[0].v.mois.slice(0, 4) : `${deduites.length} versement(s)`}, collecte complète</p>
+        </button>
+        <button onClick={allerAuxConsommations} className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-left transition hover:bg-rose-100">
           <p className="text-xs font-medium text-rose-700">Consommée</p>
           <p className="mt-1 font-display text-lg font-bold tabular-nums text-rose-700 sm:text-xl">{money(totalConsomme)}</p>
-          <p className="mt-0.5 text-[11px] text-rose-600">{consommations.length} entrée(s){filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
-        </div>
-        <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
+          <p className="mt-0.5 text-[11px] text-rose-600">{consommations.length} entrée(s){filtrePeriode !== "all" ? ` · ${labelPeriode(filtrePeriode)}` : ""}</p>
+        </button>
+        <button onClick={() => basculerStatut("complement")} className={`rounded-2xl border border-cyan-200 bg-cyan-50 p-4 text-left transition hover:bg-cyan-100 ${filtreStatut === "complement" ? carteActive + " ring-cyan-400" : ""}`}>
           <p className="flex items-center gap-1 text-xs font-medium text-cyan-700"><PlusCircle size={12} /> Complété (ma poche)</p>
           <p className="mt-1 font-display text-lg font-bold tabular-nums text-cyan-700 sm:text-xl">{money(totalComplement)}</p>
-          <p className="mt-0.5 text-[11px] text-cyan-600">{lignes.filter((l) => l.c.complement > 0).length} versement(s) complété(s){filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
-        </div>
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <p className="mt-0.5 text-[11px] text-cyan-600">{avecComplement.length === 1 ? cap(moisNom(avecComplement[0].v.mois)) + " " + avecComplement[0].v.mois.slice(0, 4) : `${avecComplement.length} versement(s)`}</p>
+        </button>
+        <button onClick={() => basculerStatut("nonDeduite")} className={`rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left transition hover:bg-amber-100 ${filtreStatut === "nonDeduite" ? carteActive + " ring-amber-400" : ""}`}>
           <p className="text-xs font-medium text-amber-700">Non déduite</p>
           <p className="mt-1 font-display text-lg font-bold tabular-nums text-amber-700 sm:text-xl">{money(totalNonDeduit)}</p>
-          <p className="mt-0.5 text-[11px] text-amber-600">{nonDeduites.length} versement(s){filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm">
+          <p className="mt-0.5 text-[11px] text-amber-600">{nonDeduites.length === 1 ? cap(moisNom(nonDeduites[0].v.mois)) + " " + nonDeduites[0].v.mois.slice(0, 4) : `${nonDeduites.length} versement(s)`}</p>
+        </button>
+        <button onClick={() => go("parametres")} className="rounded-2xl border border-slate-200/70 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50">
           <p className="text-xs font-medium text-slate-400">Taux actuel</p>
           <p className="mt-1 font-display text-lg font-bold tabular-nums text-slate-900 sm:text-xl">{p.commissionPct ?? 0}%</p>
-          <p className="mt-0.5 text-[11px] text-slate-400">réglable dans Paramètres</p>
-        </div>
+          <p className="mt-0.5 text-[11px] text-slate-400">modifier dans Paramètres →</p>
+        </button>
       </div>
 
       {/* Évolution des 6 derniers mois — mini-graphique en barres, sans dépendance de bibliothèque
@@ -2598,7 +2648,7 @@ function MesCommissions({ data, setData, go, isDark }) {
       {/* Répartition des consommations par catégorie, pour la période affichée. */}
       {categoriesTriees.length > 0 && (
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-700">Répartition par catégorie{filtreAnnee !== "all" ? ` — ${filtreAnnee}` : ""}</h3>
+          <h3 className="text-sm font-semibold text-slate-700">Répartition par catégorie{filtrePeriode !== "all" ? ` — ${labelPeriode(filtrePeriode)}` : ""}</h3>
           <div className="mt-3 space-y-2.5">
             {categoriesTriees.map(([cat, montant]) => (
               <div key={cat} className="flex items-center gap-3">
@@ -2611,13 +2661,13 @@ function MesCommissions({ data, setData, go, isDark }) {
         </div>
       )}
 
-      <div>
+      <div ref={consoRef}>
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-700">Ce que j'ai consommé</h3>
           <button onClick={ouvrirAjout} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800"><Plus size={14} /> Noter une dépense</button>
         </div>
         {consommations.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-8 text-center text-sm text-slate-400 shadow-sm">Rien noté{filtreAnnee !== "all" ? ` pour ${filtreAnnee}` : " pour l'instant"}.</div>
+          <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-8 text-center text-sm text-slate-400 shadow-sm">Rien noté{filtrePeriode !== "all" ? ` pour ${labelPeriode(filtrePeriode)}` : " pour l'instant"}.</div>
         ) : (
           <div className="space-y-2">
             {consommations.map((c) => (
@@ -2641,10 +2691,13 @@ function MesCommissions({ data, setData, go, isDark }) {
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-slate-700">Historique des commissions</h3>
-        {lignes.length === 0 ? (
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-700">Historique des commissions</h3>
+          {filtreStatut !== "all" && <button onClick={() => setFiltreStatut("all")} className="text-xs font-medium text-teal-700 hover:underline">Retirer le filtre ×</button>}
+        </div>
+        {lignesAffichees.length === 0 ? (
           <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-10 text-center text-sm text-slate-400 shadow-sm">
-            {filtreAnnee !== "all" ? `Aucun versement en ${filtreAnnee}.` : (
+            {filtreStatut !== "all" ? "Aucun versement ne correspond à ce filtre." : filtrePeriode !== "all" ? `Aucun versement pour ${labelPeriode(filtrePeriode)}.` : (
               <>
                 Aucune donnée pour l'instant.
                 <button onClick={() => go("versements")} className="mt-2 block font-medium text-teal-700 hover:underline">Créer un versement →</button>
@@ -2653,7 +2706,7 @@ function MesCommissions({ data, setData, go, isDark }) {
           </div>
         ) : (
           <div className="space-y-3">
-            {lignes.map(({ v, c }) => (
+            {lignesAffichees.map(({ v, c }) => (
               <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -3671,6 +3724,7 @@ function FontStyles() {
       .dark .border-slate-200\/70{border-color:rgba(51,65,85,.7)}
       .dark .border-slate-300{border-color:#475569}
       .dark .divide-slate-100>:not([hidden])~:not([hidden]){border-color:#334155}
+      .dark .divide-rose-100\/70>:not([hidden])~:not([hidden]){border-color:rgba(244,63,94,.2)}
       .dark .ring-slate-100{--tw-ring-color:#334155}
       .dark .ring-slate-900\/5{--tw-ring-color:rgba(255,255,255,.06)}
       .dark .ring-slate-500\/20{--tw-ring-color:rgba(148,163,184,.25)}
@@ -3741,6 +3795,13 @@ function FontStyles() {
       .dark .hover\:bg-pink-100:hover{background-color:rgba(236,72,153,.25)}
       .dark .hover\:bg-rose-100:hover{background-color:rgba(244,63,94,.25)}
       .dark .hover\:bg-teal-100:hover{background-color:rgba(20,184,166,.25)}
+      .dark .hover\:bg-amber-100:hover{background-color:rgba(245,158,11,.25)}
+      .dark .hover\:bg-emerald-100:hover{background-color:rgba(16,185,129,.25)}
+      .dark .hover\:bg-orange-100:hover{background-color:rgba(249,115,22,.25)}
+      .dark .ring-amber-400{--tw-ring-color:#fbbf24}
+      .dark .ring-cyan-400{--tw-ring-color:#22d3ee}
+      .dark .ring-emerald-400{--tw-ring-color:#34d399}
+      .dark .ring-orange-400{--tw-ring-color:#fb923c}
       .dark .text-amber-800{color:#fde68a}
       .dark .bg-violet-50{background-color:rgba(139,92,246,.15)}
     }
