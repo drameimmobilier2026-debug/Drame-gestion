@@ -8,7 +8,7 @@ import {
   Home, Building2, DoorOpen, Users, Wallet, BarChart3, Mic, Send, Plus, Search,
   LogOut, X, Check, AlertTriangle, TrendingUp, Sparkles, Volume2, VolumeX, Pencil,
   Trash2, Receipt, Menu, Phone, Mail, MapPin, ChevronRight, ArrowLeft, ArrowUpRight,
-  CalendarClock, Calendar, ArrowDownRight, Layers, Coins, FolderOpen, Settings, FileText, Tag, Upload, RotateCcw, Bell, Banknote, Sun, Moon, Monitor, MessageCircle, MessageSquare, Share2, Printer, Download,
+  CalendarClock, Calendar, ArrowDownRight, Layers, Coins, FolderOpen, Settings, FileText, Tag, Upload, RotateCcw, Bell, Banknote, Sun, Moon, Monitor, MessageCircle, MessageSquare, Share2, Printer, Download, Percent, PlusCircle,
 } from "lucide-react";
 
 /* ============================ Helpers ============================ */
@@ -123,12 +123,29 @@ function arrieresLocataire(data, locataireId, excludePaiementId) {
    Le format PDF étant un format texte assez simple pour un document basique, ce générateur
    construit un PDF valide à la main (page A4, rectangles de couleur, texte, lignes) —
    validé structurellement (qpdf), en extraction de texte (pdftotext/pypdf) et visuellement. */
+// Caractères typographiques Unicode courants qui n'ont PAS le même code que leur octet WinAnsi
+// (contrairement aux lettres accentuées latines, où Unicode et WinAnsi coïncident jusqu'à 0xFF) —
+// la plage 0x80-0x9F de WinAnsi contient des caractères spéciaux (tirets, guillemets, puces...)
+// à un tout autre endroit qu'en Unicode. Sans cette table, chacun de ces caractères s'affiche
+// comme "?" dans le PDF — bug rencontré plusieurs fois (€, signe moins, tiret cadratin...) avant
+// de le traiter une bonne fois pour toutes ici plutôt qu'au cas par cas.
+const WINANSI_SPECIAUX = {
+  0x20ac: 0x80, // €
+  0x2018: 0x91, // ' guillemet simple ouvrant
+  0x2019: 0x92, // ' guillemet simple fermant / apostrophe typographique
+  0x201c: 0x93, // " guillemet double ouvrant
+  0x201d: 0x94, // " guillemet double fermant
+  0x2022: 0x95, // • puce
+  0x2013: 0x96, // – tiret demi-cadratin (en dash)
+  0x2014: 0x97, // — tiret cadratin (em dash)
+  0x2026: 0x85, // … points de suspension
+  0x2212: 0x2d, // − signe moins typographique -> tiret clavier normal (pas d'équivalent WinAnsi direct)
+};
 function pdfEscapeText(str) {
   let out = "";
   for (const ch of String(str)) {
     const code = ch.codePointAt(0);
-    if (code === 0x2019) { out += "'"; continue; }
-    if (code === 0x20ac) { out += String.fromCharCode(0x80); continue; } // €
+    if (WINANSI_SPECIAUX[code] !== undefined) { out += String.fromCharCode(WINANSI_SPECIAUX[code]); continue; }
     // Espaces Unicode variées (insécable, fine insécable utilisée par Intl.NumberFormat
     // pour séparer les milliers, etc.) -> espace normale, sinon le "?" de repli s'affiche.
     if (code === 0x00a0 || code === 0x202f || code === 0x2009 || code === 0x2007 || code === 0x2002 || code === 0x2003) { out += " "; continue; }
@@ -198,6 +215,8 @@ const TPL_GENERAL = "Bonjour {locataire}, nous vous rappelons que le loyer de vo
 const TPL_RETARD = "Bonjour {locataire}, notre relevé indique un loyer impayé pour le local {local} ({mois}) d'un montant de {montant}. Merci de bien vouloir régulariser dans les meilleurs délais. {societe}";
 const DOC_CATS = ["Bail", "Quittance", "Pièce d'identité", "État des lieux", "Assurance", "Autre"];
 const DOC_CAT_CLS = { "Bail": "bg-teal-50 text-teal-700", "Quittance": "bg-emerald-50 text-emerald-700", "Pièce d'identité": "bg-indigo-50 text-indigo-700", "État des lieux": "bg-amber-50 text-amber-700", "Assurance": "bg-cyan-50 text-cyan-700", "Autre": "bg-slate-100 text-slate-600" };
+const CONSO_CATS = ["Transport", "Matériel", "Communication", "Personnel", "Frais bancaires", "Autre"];
+const CONSO_CAT_CLS = { "Transport": "bg-cyan-50 text-cyan-700", "Matériel": "bg-indigo-50 text-indigo-700", "Communication": "bg-violet-50 text-violet-700", "Personnel": "bg-amber-50 text-amber-700", "Frais bancaires": "bg-rose-50 text-rose-700", "Autre": "bg-slate-100 text-slate-600" };
 const buildRappelMessage = (tpl, t, info, societe) => tpl.split("{locataire}").join(`${t.prenom} ${t.nom}`).split("{local}").join(info.local.nom).split("{montant}").join(money(info.montant)).split("{mois}").join(cap(moisNom(info.mois))).split("{jour}").join("5").split("{societe}").join(societe);
 // Ancienneté lisible depuis une date d'entrée (ex. "2 ans et 4 mois")
 function anciennete(dateStr) {
@@ -221,6 +240,9 @@ const shiftMonth = (base, delta) => {
 };
 const moisLong = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }); };
 const moisNom = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString("fr-FR", { month: "long" }); };
+// Date complète lisible (ex. "15 juillet 2026") à partir d'un "AAAA-MM-JJ" — construite en
+// heure locale (pas via new Date(string) direct) pour éviter tout décalage de fuseau horaire.
+const dateFr = (iso) => { if (!iso) return "—"; const [y, mo, d] = iso.split("-").map(Number); return new Date(y, mo - 1, d).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }); };
 const moisCourt = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString("fr-FR", { month: "short" }).replace(".", ""); };
 
 const moisAvance = curMonth;                 // ex. juillet — immeubles "en avance"
@@ -287,9 +309,10 @@ function seed() {
   const depenses = [];
   const documents = [];
   const versements = [];
+  const consommations = []; // ce que le gestionnaire a dépensé de ses commissions
   const parametres = { societe: "Gérance Damakania", gerant: "Administrateur", email: "gerant@drame-gestion.gn", telephone: "+224 620 00 00 00", devise: "GNF", gestionnaire: "Sanoussy DRAMÉ", proprietaire: "Elhadj Ousmane MAGASSOUBA", proprietaireTelephone: "", commissionPct: 0, theme: "system", rappelGeneral: TPL_GENERAL, rappelRetard: TPL_RETARD };
   const rappels = [];
-  return { immeubles, locaux, locataires, paiements, depenses, documents, parametres, versements, rappels };
+  return { immeubles, locaux, locataires, paiements, depenses, documents, parametres, versements, rappels, consommations };
 }
 
 /* ============================ Atoms ============================ */
@@ -462,9 +485,17 @@ function Dashboard({ data, go, isDark }) {
 
   const aRecouvrer = [...avancePaie, ...echuPaie].filter((p) => p.statut !== "paye");
 
+  // Locataires en arriéré (tous mois impayés confondus, pas seulement le cycle en cours) —
+  // pour signaler les cas qui méritent un vrai suivi, avec un lien direct vers Arriérés.
+  const impayesTous = paiements.filter((p) => { if (p.statut === "paye") return false; const dernier = modeOf(p.immeubleId) === "avance" ? moisAvance : moisEchu; return p.mois <= dernier; });
+  const parLocataireArrieres = {};
+  impayesTous.forEach((p) => { const k = p.locataireId || p.localId; parLocataireArrieres[k] = (parLocataireArrieres[k] || 0) + 1; });
+  const nbSeveres = Object.values(parLocataireArrieres).filter((n) => n >= 3).length;
+  const nbEnArrieres = Object.keys(parLocataireArrieres).length;
+
   const kpis = [
     { label: "Taux d'occupation", value: `${tauxOcc}%`, sub: `${occ}/${locaux.length} locaux`, icon: TrendingUp, grad: "from-teal-400 to-teal-600", go: () => go("locaux") },
-    { label: "Impayés du cycle", value: moneyC(impayeTotal), sub: `${aRecouvrer.length} à relancer`, icon: AlertTriangle, grad: "from-rose-400 to-rose-600", go: () => go("recouvrement") },
+    { label: "Impayés du cycle", value: moneyC(impayeTotal), sub: `${aRecouvrer.length} à relancer`, icon: AlertTriangle, grad: "from-rose-400 to-rose-600", go: () => go("retards") },
     { label: "Locataires", value: locataires.length, sub: `${immeubles.length} immeubles`, icon: Users, grad: "from-violet-400 to-violet-600", go: () => go("locataires") },
     { label: "Locaux", value: locaux.length, sub: `${locaux.length - occ} vacants`, icon: DoorOpen, grad: "from-orange-400 to-orange-600", go: () => go("locaux") },
   ];
@@ -491,7 +522,7 @@ function Dashboard({ data, go, isDark }) {
                 <div className="text-xs font-medium uppercase tracking-wide text-teal-100/70">Encaissé</div>
                 <div className="font-display text-3xl font-bold leading-tight tabular-nums lg:text-[2.4rem]">{money(encAnim)}</div>
                 <div className="mt-1 text-xs text-teal-100/80 sm:text-sm">sur {money(attenduTotal)} attendu · <span className="text-rose-100">{money(impayeTotal)} à recouvrer</span></div>
-                <div className="mt-2 inline-flex items-center gap-1 text-xs text-teal-50 opacity-0 transition group-hover:opacity-100">Voir les paiements <ArrowUpRight size={13} /></div>
+                <div className="mt-2 inline-flex items-center gap-1 text-xs text-teal-50 transition">Voir les paiements <ArrowUpRight size={13} /></div>
               </div>
             </div>
           </button>
@@ -524,6 +555,16 @@ function Dashboard({ data, go, isDark }) {
         </div>
       </div>
 
+      {nbEnArrieres > 0 && (
+        <button onClick={() => go("arrieres")} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-pink-200 bg-pink-50 px-4 py-3 text-left transition hover:bg-pink-100">
+          <span className="flex items-center gap-2 text-sm font-medium text-pink-800">
+            <CalendarClock size={16} className="shrink-0" />
+            {nbSeveres > 0 ? `${nbSeveres} locataire(s) en arriéré sévère (3 mois ou plus)` : `${nbEnArrieres} locataire(s) ont des mois impayés`}
+          </span>
+          <span className="shrink-0 text-xs font-medium text-pink-700">Voir les arriérés →</span>
+        </button>
+      )}
+
       {/* KPIs cliquables */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {kpis.map((k) => (
@@ -533,7 +574,7 @@ function Dashboard({ data, go, isDark }) {
               <span className={`grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br shadow-sm ${k.grad}`}><k.icon size={15} className="text-white" /></span>
             </div>
             <div className="mt-3 font-display text-xl font-semibold tabular-nums text-slate-900 lg:text-2xl">{k.value}</div>
-            <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">{k.sub}<ChevronRight size={12} className="opacity-0 transition group-hover:opacity-100" /></div>
+            <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">{k.sub}<ChevronRight size={12} className="transition" /></div>
           </button>
         ))}
       </div>
@@ -747,6 +788,10 @@ function PaymentsTable({ list, data, setData, go }) {
   const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "—"; };
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
   const encaisser = (id) => setData((d) => ({ ...d, paiements: d.paiements.map((p) => p.id === id ? { ...p, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) } : p) }));
+  const supprimer = (p) => {
+    if (!confirm(`Supprimer ce paiement de ${money(p.montant)} pour ${nom(p.locataireId)} (${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}) ?\n\nCette action est irréversible.`)) return;
+    setData((d) => ({ ...d, paiements: d.paiements.filter((x) => x.id !== p.id) }));
+  };
   const [quittance, setQuittance] = useState(null);
   if (!list.length) return <div className="px-5 py-10 text-center text-sm text-slate-400">Aucun paiement.</div>;
   return (
@@ -772,7 +817,12 @@ function PaymentsTable({ list, data, setData, go }) {
                   <td className="px-5 py-3.5"><Badge statut={p.statut} /></td>
                   <td className="px-5 py-3.5 text-right">
                     {p.statut !== "paye"
-                      ? <button onClick={() => encaisser(p.id)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"><Check size={14} /> Encaisser</button>
+                      ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => encaisser(p.id)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"><Check size={14} /> Encaisser</button>
+                          <button onClick={() => supprimer(p)} title="Supprimer ce paiement" className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+                        </div>
+                      )
                       : (
                         <div className="flex items-center justify-end gap-1.5">
                           <a
@@ -784,6 +834,7 @@ function PaymentsTable({ list, data, setData, go }) {
                           ><MessageCircle size={14} /></a>
                           <button onClick={() => { const { bytes, fichier } = genererQuittancePdf(p, data); telechargerPdf(bytes, fichier); }} title="Télécharger la quittance en PDF" className="inline-flex items-center rounded-lg bg-teal-50 px-2 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100"><Download size={14} /></button>
                           <button onClick={() => setQuittance(p)} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200"><Receipt size={14} /> Voir</button>
+                          <button onClick={() => supprimer(p)} title="Supprimer ce paiement" className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
                         </div>
                       )}
                   </td>
@@ -860,8 +911,8 @@ function Immeubles({ data, setData, go }) {
                 </div>
               ) : (
                 <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-                  <span className="flex items-center gap-1 text-xs font-medium text-teal-700 opacity-0 transition group-hover:opacity-100">Ouvrir <ChevronRight size={13} /></span>
-                  <div className="flex gap-1 opacity-0 transition group-hover:opacity-100">
+                  <span className="flex items-center gap-1 text-xs font-medium text-teal-700 transition">Ouvrir <ChevronRight size={13} /></span>
+                  <div className="flex gap-1 transition">
                     <button onClick={() => open(im)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
                     <button onClick={() => setConfirmDel(im.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
                   </div>
@@ -1007,7 +1058,7 @@ function Locaux({ data, setData, go }) {
               </button>
               <div className="mt-4 flex items-end justify-between border-t border-slate-100 pt-3">
                 <span className="font-display text-lg font-semibold tabular-nums text-slate-900">{money(l.loyer + l.charges)}</span>
-                <div className="flex gap-1 opacity-0 transition group-hover:opacity-100">
+                <div className="flex gap-1 transition">
                   <button onClick={() => open(l)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
                   <button onClick={() => del(l.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
                 </div>
@@ -1162,7 +1213,7 @@ function Locataires({ data, setData, go }) {
                 <p className="flex min-w-0 items-center gap-2"><Phone size={13} className="shrink-0 text-slate-400" /><span className="truncate">{t.telephone || "—"}</span></p>
               </div>
             </button>
-            <div className="mt-3 flex justify-end gap-1 border-t border-slate-100 pt-3 opacity-0 transition group-hover:opacity-100">
+            <div className="mt-3 flex justify-end gap-1 border-t border-slate-100 pt-3 transition">
               <button onClick={() => open(t)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
               <button onClick={() => del(t.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
             </div>
@@ -1260,7 +1311,14 @@ function LocataireDetail({ id, data, setData, go }) {
             {im ? <button onClick={() => go("immeuble", im.id)} className="mt-0.5 font-display text-sm font-semibold text-teal-700 hover:underline">{im.nom}</button> : <div className="mt-0.5 text-sm text-slate-400">—</div>}
           </div>
           <MiniStat label="Loyer / mois" value={money(l ? l.loyer + l.charges : 0)} />
-          <MiniStat label="Impayé" value={money(impaye)} tint={impaye ? "text-rose-600" : "text-emerald-600"} />
+          {impaye > 0 ? (
+            <button onClick={() => go("arrieres")} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-left transition hover:bg-rose-100">
+              <div className="text-[11px] font-medium text-rose-600">Impayé — voir dans Arriérés</div>
+              <div className="mt-0.5 font-display text-base font-semibold tabular-nums text-rose-600">{money(impaye)}</div>
+            </button>
+          ) : (
+            <MiniStat label="Impayé" value={money(impaye)} tint="text-emerald-600" />
+          )}
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1299,7 +1357,7 @@ function LocataireDetail({ id, data, setData, go }) {
               <li key={d.id} className="flex items-center justify-between gap-3 px-5 py-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100"><FileText size={16} className="text-slate-500" /></div>
-                  <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{d.nom}</p><p className="text-xs text-slate-400">{d.date}</p></div>
+                  <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{d.nom}</p><p className="text-xs text-slate-400">{dateFr(d.date)}</p></div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${DOC_CAT_CLS[d.categorie] || "bg-slate-100 text-slate-600"}`}>{d.categorie}</span>
@@ -1614,6 +1672,10 @@ function Retards({ data, setData, go }) {
   const totalGeneral = retards.reduce((s, p) => s + p.montant, 0);
 
   const encaisser = (pid) => setData((d) => ({ ...d, paiements: d.paiements.map((p) => p.id === pid ? { ...p, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) } : p) }));
+  const supprimer = (p) => {
+    if (!confirm(`Supprimer ce paiement de ${money(p.montant)} pour ${nom(p.locataireId)} (${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}) ?\n\nCette action est irréversible.`)) return;
+    setData((d) => ({ ...d, paiements: d.paiements.filter((x) => x.id !== p.id) }));
+  };
 
   return (
     <div className="space-y-5">
@@ -1661,9 +1723,10 @@ function Retards({ data, setData, go }) {
                       <span className="text-slate-700">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span>
                       <Badge statut={p.statut} />
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <span className="font-display text-sm font-semibold tabular-nums text-slate-900">{money(p.montant)}</span>
                       <button onClick={() => encaisser(p.id)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"><Check size={14} /> Encaisser</button>
+                      <button onClick={() => supprimer(p)} title="Supprimer ce paiement" className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
                     </div>
                   </li>
                 ))}
@@ -1677,6 +1740,208 @@ function Retards({ data, setData, go }) {
         <Bell size={14} className="mt-0.5 shrink-0 text-slate-400" />
         <span>Pour envoyer une relance à ces locataires, utilisez le module <button onClick={() => go("rappels")} className="font-medium text-teal-700 underline">Rappels</button> (relance automatique aux retardataires).</span>
       </div>
+    </div>
+  );
+}
+
+/* ============================ Arriérés ============================
+   Vue documentaire et analytique des impayés accumulés — distincte de "Retards"
+   (orientée action rapide : encaisser/supprimer) et de "Rappels" (orientée envoi
+   de messages). Celle-ci répond à "combien, depuis quand, et à quel point c'est
+   grave", avec un vrai relevé PDF par locataire, envoyable directement par WhatsApp. */
+const SEVERITE_CLS = {
+  leger: { badge: "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20", dot: "bg-amber-500", label: "Léger" },
+  modere: { badge: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20", dot: "bg-orange-500", label: "Modéré" },
+  severe: { badge: "bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/20", dot: "bg-rose-500", label: "Sévère" },
+};
+function Arrieres({ data, go }) {
+  const modeOf = (id) => data.immeubles.find((i) => i.id === id)?.mode;
+  const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "—"; };
+  const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
+  const imNom = (id) => data.immeubles.find((x) => x.id === id)?.nom || "—";
+  const societe = data.parametres?.societe || "DRAMÉ Gestion";
+  const [tri, setTri] = useState("montant");
+  const [releve, setReleve] = useState(null);
+
+  // Même portée de données que "Retards" (tous les impayés jusqu'au cycle courant inclus),
+  // mais regroupée et enrichie pour une lecture analytique plutôt qu'orientée action immédiate.
+  const impayes = data.paiements.filter((p) => {
+    if (p.statut === "paye") return false;
+    const dernier = modeOf(p.immeubleId) === "avance" ? moisAvance : moisEchu;
+    return p.mois <= dernier;
+  });
+
+  const parLocataire = {};
+  impayes.forEach((p) => {
+    const k = p.locataireId || p.localId;
+    if (!parLocataire[k]) parLocataire[k] = { locataireId: p.locataireId, localId: p.localId, immeubleId: p.immeubleId, lignes: [], total: 0 };
+    parLocataire[k].lignes.push(p);
+    parLocataire[k].total += p.montant;
+  });
+
+  const moisNum = (m) => { const [y, mo] = m.split("-").map(Number); return y * 12 + mo; };
+  const curNum = moisNum(curMonth);
+  let groupes = Object.values(parLocataire).map((g) => {
+    g.lignes.sort((a, b) => a.mois.localeCompare(b.mois));
+    const ancienneteMois = curNum - moisNum(g.lignes[0].mois) + 1;
+    const severite = g.lignes.length >= 3 ? "severe" : g.lignes.length === 2 ? "modere" : "leger";
+    return { ...g, ancienneteMois, severite, nbMois: g.lignes.length };
+  });
+  groupes = groupes.sort((a, b) => (tri === "mois" ? b.nbMois - a.nbMois : tri === "anciennete" ? b.ancienneteMois - a.ancienneteMois : b.total - a.total));
+
+  const totalGeneral = impayes.reduce((s, p) => s + p.montant, 0);
+  const severes = groupes.filter((g) => g.severite === "severe").length;
+
+  const messagePour = (g) => {
+    const moisTexte = g.lignes.map((p) => `${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}`).join(", ");
+    return `Bonjour ${nom(g.locataireId)}, nous constatons un arriéré de ${money(g.total)} sur ${g.nbMois} mois (${moisTexte}) pour votre location au ${localNom(g.localId)}. Merci de bien vouloir régulariser dans les meilleurs délais. — ${signatureGestionnaire(data)}`;
+  };
+
+  const genererRelevePdf = (g) => {
+    const signature = signatureGestionnaire(data);
+    const ref = `A-${curMonth.replace("-", "")}-${(g.locataireId || g.localId).slice(-4).toUpperCase()}`;
+    const ops = [
+      { type: "rect", x: 0, y: 700, w: 595, h: 142, color: [0.55, 0.13, 0.13] },
+      { type: "text", x: 50, y: 803, size: 18, font: "B", color: [1, 1, 1], text: societe },
+      { type: "text", x: 50, y: 778, size: 10, font: "R", color: [0.95, 0.85, 0.85], text: "RELEVÉ D'ARRIÉRÉS" },
+      { type: "text", x: 460, y: 803, size: 9, font: "R", color: [0.95, 0.85, 0.85], text: "N°" },
+      { type: "text", x: 460, y: 790, size: 11, font: "B", color: [1, 1, 1], text: ref },
+      { type: "text", x: 50, y: 660, size: 11, font: "R", color: [0.35, 0.35, 0.35], text: "Concernant" },
+      { type: "text", x: 50, y: 638, size: 17, font: "B", color: [0.05, 0.05, 0.08], text: nom(g.locataireId) },
+      { type: "text", x: 50, y: 617, size: 10, font: "R", color: [0.4, 0.4, 0.4], text: `Local ${localNom(g.localId)} · ${imNom(g.immeubleId)}` },
+      { type: "rect", x: 50, y: 552, w: 495, h: 48, color: [0.98, 0.93, 0.93] },
+      { type: "text", x: 65, y: 578, size: 20, font: "B", color: [0.6, 0.13, 0.13], text: money(g.total) },
+      { type: "text", x: 65, y: 562, size: 9, font: "R", color: [0.5, 0.4, 0.4], text: `${g.nbMois} mois impayé(s) — ${montantEnLettres(g.total)}` },
+      { type: "text", x: 50, y: 520, size: 10, font: "B", color: [0.3, 0.3, 0.3], text: "Détail par mois :" },
+    ];
+    let y = 500;
+    ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
+    g.lignes.forEach((p) => {
+      ops.push({ type: "text", x: 50, y, size: 10, font: "R", color: [0.2, 0.2, 0.2], text: `${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}` });
+      ops.push({ type: "text", x: 460, y, size: 10, font: "R", color: [0.1, 0.1, 0.1], text: money(p.montant) });
+      y -= 20;
+    });
+    ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
+    y -= 25;
+    ops.push({ type: "text", x: 50, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: `Relevé émis le ${dateFr(new Date().toISOString().slice(0, 10))}.` });
+    y -= 25;
+    ops.push({ type: "text", x: 50, y, size: 9, font: "B", color: [0.2, 0.2, 0.2], text: signature });
+    return { bytes: buildPdfBytes({ ops }), fichier: `${ref}.pdf`, ref };
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+          <div className="text-xs font-medium text-slate-500">Locataires concernés</div>
+          <div className="mt-2 font-display text-2xl font-semibold text-rose-600">{groupes.length}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+          <div className="text-xs font-medium text-slate-500">Cas sévères (3+ mois)</div>
+          <div className="mt-2 font-display text-2xl font-semibold text-rose-600">{severes}</div>
+        </div>
+        <div className="col-span-2 rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm sm:col-span-1">
+          <div className="text-xs font-medium text-slate-500">Total des arriérés</div>
+          <div className="mt-2 font-display text-2xl font-semibold tabular-nums text-rose-600">{moneyC(totalGeneral)}</div>
+        </div>
+      </div>
+
+      {groupes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-slate-500">Trier par :</span>
+          {[["montant", "Montant"], ["mois", "Nombre de mois"], ["anciennete", "Ancienneté"]].map(([k, l]) => (
+            <button key={k} onClick={() => setTri(k)} className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${tri === k ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>{l}</button>
+          ))}
+        </div>
+      )}
+
+      {groupes.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-12 text-center text-sm text-slate-400 shadow-sm">Aucun arriéré. 🎉</div>
+      ) : (
+        <div className="space-y-3">
+          {groupes.map((g) => {
+            const sv = SEVERITE_CLS[g.severite];
+            const tel = data.locataires.find((x) => x.id === g.locataireId)?.telephone;
+            return (
+              <div key={g.locataireId || g.localId} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <button onClick={() => g.locataireId && go("locataire", g.locataireId)} className="flex min-w-0 items-center gap-3 text-left">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-rose-400 to-rose-600 text-xs font-semibold text-white">{initials(data.locataires.find((x) => x.id === g.locataireId) || { nom: "?" })}</div>
+                    <div className="min-w-0">
+                      <p className="truncate font-display font-semibold text-slate-900">{nom(g.locataireId)}</p>
+                      <p className="truncate text-xs text-slate-400">{localNom(g.localId)} · {imNom(g.immeubleId)}</p>
+                    </div>
+                  </button>
+                  <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${sv.badge}`}><span className={`h-1.5 w-1.5 rounded-full ${sv.dot}`} />{sv.label}</span>
+                </div>
+
+                <div className="mt-3.5 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center">
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Mois dus</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{g.nbMois}</p></div>
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Depuis</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{g.ancienneteMois} mois</p></div>
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Total dû</p><p className="mt-0.5 font-display text-sm font-semibold tabular-nums text-rose-600">{money(g.total)}</p></div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {g.lignes.map((p) => <span key={p.id} className="rounded-full bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span>)}
+                </div>
+
+                <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                  <button onClick={() => setReleve(g)} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800"><FileText size={14} /> Relevé PDF</button>
+                  <a href={tel ? waLink(tel, messagePour(g)) : undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (!tel) e.preventDefault(); }} title={tel ? "" : "Aucun numéro enregistré"} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white ${tel ? "bg-emerald-600 hover:bg-emerald-700" : "cursor-not-allowed bg-slate-200 text-slate-400"}`}><MessageCircle size={14} /> Relancer</a>
+                  {g.locataireId && <button onClick={() => go("locataire", g.locataireId)} className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200">Fiche</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal open={!!releve} onClose={() => setReleve(null)} title="Relevé d'arriérés">
+        {releve && (() => {
+          const { bytes, fichier } = genererRelevePdf(releve);
+          const ref = fichier.replace(".pdf", "");
+          const tel = data.locataires.find((x) => x.id === releve.locataireId)?.telephone;
+          return (
+            <div>
+              <div className="print-area overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="relative overflow-hidden bg-gradient-to-br from-rose-800 via-rose-700 to-red-700 px-6 py-5 text-white">
+                  <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "radial-gradient(circle, #fff 1.5px, transparent 1.5px)", backgroundSize: "16px 16px" }} />
+                  <div className="relative flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2"><div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/15"><AlertTriangle size={16} /></div><span className="truncate font-display text-lg font-bold">{societe}</span></div>
+                      <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.2em] text-rose-100/80">Relevé d'arriérés</p>
+                    </div>
+                    <div className="shrink-0 text-right"><div className="text-[10px] uppercase tracking-wide text-rose-100/70">N°</div><div className="font-display text-sm font-semibold tabular-nums">{ref}</div></div>
+                  </div>
+                </div>
+                <div className="px-6 py-6">
+                  <p className="text-sm text-slate-500">Concernant</p>
+                  <p className="font-display text-xl font-semibold text-slate-900">{nom(releve.locataireId)}</p>
+                  <p className="mt-1 text-sm text-slate-400">Local {localNom(releve.localId)} · {imNom(releve.immeubleId)}</p>
+                  <div className="mt-5 rounded-2xl bg-rose-50 p-5">
+                    <p className="font-display text-3xl font-bold tabular-nums text-rose-700 sm:text-4xl">{money(releve.total)}</p>
+                    <p className="mt-1.5 text-xs italic text-rose-600">{releve.nbMois} mois impayé(s) — {montantEnLettres(releve.total)}</p>
+                  </div>
+                  <div className="mt-5 divide-y divide-slate-100 rounded-xl border border-slate-100">
+                    {releve.lignes.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between px-4 py-2.5 text-sm"><span className="text-slate-700">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span><span className="font-medium tabular-nums text-slate-900">{money(p.montant)}</span></div>
+                    ))}
+                  </div>
+                  <div className="my-5 border-t border-dashed border-slate-300" />
+                  <p className="text-xs leading-relaxed text-slate-500">Relevé émis le {dateFr(new Date().toISOString().slice(0, 10))}, récapitulant les loyers dus et non réglés à ce jour.</p>
+                  <p className="mt-3 text-xs font-semibold text-slate-700">{signatureGestionnaire(data)}</p>
+                </div>
+              </div>
+              <div className="no-print mt-4 flex flex-wrap justify-end gap-2">
+                <GhostBtn onClick={() => setReleve(null)}>Fermer</GhostBtn>
+                <GhostBtn onClick={() => window.print()}><Printer size={15} /> Imprimer</GhostBtn>
+                <PrimaryBtn onClick={() => telechargerPdf(bytes, fichier)}><Download size={15} /> Télécharger PDF</PrimaryBtn>
+              </div>
+              <div className="mt-4"><ShareRow phone={tel} message={messagePour(releve)} pdfBytes={bytes} pdfFilename={fichier} /></div>
+            </div>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }
@@ -1806,8 +2071,28 @@ function calcVersement(versement, data) {
     ...data.paiements.filter((x) => modeOf(x.immeubleId) === "echu" && x.mois === shiftMonth(versement.mois, -1) && x.statut === "paye"),
   ];
   const recouvre = items.reduce((s, x) => s + x.montant, 0);
+  // La commission reste basée UNIQUEMENT sur le vrai loyer recouvré auprès des locataires — jamais
+  // sur le complément personnel du gestionnaire ci-dessous, qui n'est pas un revenu locatif.
   const commission = Math.round(recouvre * (versement.commissionPct || 0) / 100);
-  return { items, recouvre, commission, net: recouvre - commission };
+  // Collecte complète : tous les locaux actuellement occupés ont un loyer payé pour ce cycle
+  // (mois courant pour un immeuble "avance", mois précédent pour un immeuble "echu"). La commission
+  // n'est considérée comme réellement perçue par le gestionnaire que dans ce cas précis — pas sur
+  // une collecte partielle, même si un versement a été marqué comme fait. Le complément personnel
+  // (ci-dessous) ne change rien à ce statut : il aide à compléter le versement au propriétaire,
+  // mais ne signifie pas que les locataires ont payé.
+  const locauxOccupes = data.locaux.filter((l) => l.statut === "loue");
+  const complete = locauxOccupes.every((l) => items.some((x) => x.localId === l.id));
+  const nbPayes = locauxOccupes.filter((l) => items.some((x) => x.localId === l.id)).length;
+  // Montant total normalement dû pour ce cycle (somme des loyers de tous les locaux occupés) —
+  // sert à mesurer l'écart quand la collecte est partielle et que le gestionnaire avance la différence
+  // de sa poche pour pouvoir verser la somme complète au propriétaire le 10.
+  const montantAttendu = locauxOccupes.reduce((s, l) => s + l.loyer + (l.charges || 0), 0);
+  const complement = versement.complement || 0;
+  const manque = Math.max(0, montantAttendu - recouvre);
+  // Net versé au propriétaire = ce qui a été recouvré auprès des locataires, moins la commission du
+  // gestionnaire, PLUS le complément personnel éventuellement ajouté pour arrondir au montant total dû.
+  const net = recouvre - commission + complement;
+  return { items, recouvre, commission, net, complete, nbPayes, nbAttendu: locauxOccupes.length, montantAttendu, complement, manque };
 }
 function genererVersementPdf(versement, data) {
   const p = data.parametres || {};
@@ -1818,6 +2103,7 @@ function genererVersementPdf(versement, data) {
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
   const c = calcVersement(versement, data);
   const ref = `V-${versement.mois.replace("-", "")}-${versement.id.slice(-4).toUpperCase()}`;
+
   const ops = [
     { type: "rect", x: 0, y: 700, w: 595, h: 142, color: [0.06, 0.29, 0.28] },
     { type: "text", x: 50, y: 803, size: 18, font: "B", color: [1, 1, 1], text: societe },
@@ -1825,37 +2111,77 @@ function genererVersementPdf(versement, data) {
     { type: "text", x: 460, y: 803, size: 9, font: "R", color: [0.85, 0.95, 0.92], text: "N°" },
     { type: "text", x: 460, y: 790, size: 11, font: "B", color: [1, 1, 1], text: ref },
     { type: "text", x: 460, y: 778, size: 9, font: "R", color: [0.85, 0.95, 0.92], text: versement.date },
-    { type: "text", x: 50, y: 660, size: 9, font: "R", color: [0.5, 0.5, 0.5], text: "Remis par (gestionnaire)" },
-    { type: "text", x: 50, y: 645, size: 13, font: "B", color: [0.05, 0.05, 0.08], text: gestionnaire },
-    { type: "text", x: 310, y: 660, size: 9, font: "R", color: [0.5, 0.5, 0.5], text: "Reçu par (propriétaire)" },
-    { type: "text", x: 310, y: 645, size: 13, font: "B", color: [0.05, 0.05, 0.08], text: proprietaire },
-    { type: "rect", x: 50, y: 585, w: 495, h: 45, color: [0.96, 0.97, 0.98] },
-    { type: "text", x: 65, y: 610, size: 18, font: "B", color: [0.02, 0.4, 0.25], text: `${money(c.net)} net versé` },
-    { type: "text", x: 65, y: 594, size: 9, font: "R", color: [0.42, 0.42, 0.42], text: cap(montantEnLettres(c.net)) },
-    { type: "text", x: 50, y: 560, size: 10, font: "B", color: [0.3, 0.3, 0.3], text: "Détail des recouvrements :" },
+    { type: "text", x: 50, y: 665, size: 9, font: "R", color: [0.5, 0.5, 0.5], text: "Remis par (gestionnaire)" },
+    { type: "text", x: 50, y: 650, size: 12, font: "B", color: [0.05, 0.05, 0.08], text: gestionnaire },
+    { type: "text", x: 310, y: 665, size: 9, font: "R", color: [0.5, 0.5, 0.5], text: "Reçu par (propriétaire)" },
+    { type: "text", x: 310, y: 650, size: 12, font: "B", color: [0.05, 0.05, 0.08], text: proprietaire },
+    { type: "rect", x: 50, y: 595, w: 495, h: 42, color: [0.93, 0.97, 0.95] },
+    { type: "text", x: 65, y: 618, size: 18, font: "B", color: [0.02, 0.4, 0.25], text: `${money(c.net)} net versé au propriétaire` },
+    { type: "text", x: 65, y: 603, size: 9, font: "R", color: [0.42, 0.42, 0.42], text: cap(montantEnLettres(c.net)) },
   ];
-  let y = 540;
-  ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
-  if (c.items.length === 0) {
-    ops.push({ type: "text", x: 50, y, size: 9, font: "R", color: [0.5, 0.5, 0.5], text: "Aucun recouvrement." });
-    y -= 18;
-  } else {
-    for (const x of c.items) {
-      ops.push({ type: "text", x: 50, y, size: 9, font: "R", color: [0.2, 0.2, 0.2], text: nom(x.locataireId) });
-      ops.push({ type: "text", x: 260, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: localNom(x.localId) });
-      ops.push({ type: "text", x: 460, y, size: 9, font: "R", color: [0.1, 0.1, 0.1], text: money(x.montant) });
+
+  let y = 578;
+  // Regroupement par immeuble — dynamique, fonctionne pour n'importe quel nombre d'immeubles,
+  // avec leur mode (avance/échu) et mois réels, plutôt qu'une liste plate indifférenciée.
+  const parImmeuble = {};
+  c.items.forEach((x) => {
+    const k = x.immeubleId;
+    if (!parImmeuble[k]) parImmeuble[k] = { immeuble: data.immeubles.find((i) => i.id === k), items: [], total: 0 };
+    parImmeuble[k].items.push(x);
+    parImmeuble[k].total += x.montant;
+  });
+  // Inclure aussi les immeubles sans aucun recouvrement ce cycle, pour une vue complète (0/Y visible).
+  data.immeubles.forEach((im) => { if (!parImmeuble[im.id]) parImmeuble[im.id] = { immeuble: im, items: [], total: 0 }; });
+  const groupesImmeubles = Object.values(parImmeuble).sort((a, b) => (a.immeuble?.nom || "").localeCompare(b.immeuble?.nom || ""));
+
+  for (const g of groupesImmeubles) {
+    if (!g.immeuble) continue;
+    const nbAttenduIm = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue").length;
+    const modeLabel = g.immeuble.mode === "avance" ? "Terme en avance" : "Terme échu";
+    const moisLabel = g.immeuble.mode === "avance" ? moisNom(versement.mois) : moisNom(shiftMonth(versement.mois, -1));
+
+    ops.push({ type: "rect", x: 50, y: y - 4, w: 495, h: 20, color: [0.95, 0.96, 0.97] });
+    ops.push({ type: "text", x: 58, y: y + 2, size: 10, font: "B", color: [0.15, 0.15, 0.2], text: g.immeuble.nom });
+    ops.push({ type: "text", x: 300, y: y + 2, size: 8, font: "R", color: [0.4, 0.4, 0.4], text: `${modeLabel} — ${cap(moisLabel)}` });
+    ops.push({ type: "text", x: 470, y: y + 2, size: 8, font: "B", color: g.items.length === nbAttenduIm && nbAttenduIm > 0 ? [0.02, 0.4, 0.25] : [0.6, 0.4, 0.02], text: `${g.items.length}/${nbAttenduIm}` });
+    y -= 22;
+
+    if (g.items.length === 0) {
+      ops.push({ type: "text", x: 58, y, size: 8, font: "R", color: [0.55, 0.55, 0.55], text: "Aucun recouvrement pour cet immeuble ce cycle." });
       y -= 16;
+    } else {
+      for (const x of g.items) {
+        ops.push({ type: "text", x: 58, y, size: 9, font: "R", color: [0.2, 0.2, 0.2], text: nom(x.locataireId) });
+        ops.push({ type: "text", x: 280, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: localNom(x.localId) });
+        ops.push({ type: "text", x: 460, y, size: 9, font: "R", color: [0.1, 0.1, 0.1], text: money(x.montant) });
+        y -= 15;
+      }
     }
+    ops.push({ type: "text", x: 400, y, size: 8, font: "B", color: [0.2, 0.2, 0.2], text: `Sous-total : ${money(g.total)}` });
+    y -= 20;
   }
-  ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
-  y -= 8;
+
+  y -= 5;
+  ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.75, 0.75, 0.75], width: 1 });
+  y -= 15;
   ops.push({ type: "text", x: 350, y, size: 9, font: "R", color: [0.4, 0.4, 0.4], text: `Total recouvré : ${money(c.recouvre)}` }); y -= 15;
-  ops.push({ type: "text", x: 350, y, size: 9, font: "R", color: [0.4, 0.4, 0.4], text: `Commission (${versement.commissionPct || 0}%) : − ${money(c.commission)}` }); y -= 25;
+  ops.push({ type: "text", x: 350, y, size: 9, font: "R", color: [0.4, 0.4, 0.4], text: `Commission (${versement.commissionPct || 0}%) : − ${money(c.commission)}` }); y -= 15;
+  if (c.complement > 0) {
+    ops.push({ type: "rect", x: 340, y: y - 4, w: 205, h: 18, color: [0.9, 0.96, 0.98] });
+    ops.push({ type: "text", x: 350, y, size: 9, font: "B", color: [0.05, 0.35, 0.45], text: `Complément personnel : + ${money(c.complement)}` });
+    y -= 18;
+  }
+  y -= 5;
+  ops.push({ type: "line", x1: 340, y1: y + 12, x2: 545, y2: y + 12, color: [0.3, 0.3, 0.3], width: 1 }); y -= 3;
+  ops.push({ type: "text", x: 350, y, size: 10, font: "B", color: [0.02, 0.4, 0.25], text: `Net versé : ${money(c.net)}` });
+  y -= 30;
+
   ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.75, 0.75, 0.75], width: 1, dash: [3, 3] }); y -= 20;
   ops.push({ type: "text", x: 50, y, size: 8, font: "R", color: [0.5, 0.5, 0.5], text: "Le gestionnaire" });
   ops.push({ type: "text", x: 310, y, size: 8, font: "R", color: [0.5, 0.5, 0.5], text: "Le propriétaire" }); y -= 25;
   ops.push({ type: "text", x: 50, y, size: 9, font: "B", color: [0.2, 0.2, 0.2], text: gestionnaire });
   ops.push({ type: "text", x: 310, y, size: 9, font: "B", color: [0.2, 0.2, 0.2], text: proprietaire });
+
   return { bytes: buildPdfBytes({ ops }), fichier: `${ref}.pdf`, ref };
 }
 
@@ -1864,7 +2190,6 @@ function VersementRecuModal({ versement, data, onClose }) {
   const gestionnaire = p.gestionnaire || "Sanoussy DRAMÉ";
   const proprietaire = p.proprietaire || "Elhadj Ousmane MAGASSOUBA";
   const societe = p.societe || "La gérance";
-  const modeOf = (id) => data.immeubles.find((i) => i.id === id)?.mode;
   const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "—"; };
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
   const calc = (v) => calcVersement(v, data);
@@ -1872,6 +2197,18 @@ function VersementRecuModal({ versement, data, onClose }) {
     <Modal open={!!versement} onClose={onClose} title="Reçu de versement" wide>
       {versement && (() => { const c = calc(versement); const { bytes: pdfBytes, fichier, ref } = genererVersementPdf(versement, data);
         const messageVersement = `Versement du ${versement.date} — période ${cap(moisNom(versement.mois))} ${versement.mois.slice(0, 4)} : ${money(c.recouvre)} recouvré, ${money(c.net)} net transmis. — ${gestionnaire}`;
+
+        // Regroupement par immeuble — même logique dynamique que le PDF, pour rester cohérents.
+        const parImmeuble = {};
+        c.items.forEach((x) => {
+          const k = x.immeubleId;
+          if (!parImmeuble[k]) parImmeuble[k] = { immeuble: data.immeubles.find((i) => i.id === k), items: [], total: 0 };
+          parImmeuble[k].items.push(x);
+          parImmeuble[k].total += x.montant;
+        });
+        data.immeubles.forEach((im) => { if (!parImmeuble[im.id]) parImmeuble[im.id] = { immeuble: im, items: [], total: 0 }; });
+        const groupesImmeubles = Object.values(parImmeuble).filter((g) => g.immeuble).sort((a, b) => a.immeuble.nom.localeCompare(b.immeuble.nom));
+
         return (
         <div>
           <div className="print-area overflow-hidden rounded-2xl border border-slate-200 bg-white">
@@ -1904,29 +2241,62 @@ function VersementRecuModal({ versement, data, onClose }) {
                 </div>
               </div>
 
-              <div className="mt-5 flex flex-wrap items-end justify-between gap-3 rounded-2xl bg-slate-50 p-5">
+              <div className="mt-5 flex flex-wrap items-end justify-between gap-3 rounded-2xl bg-emerald-50 p-5">
                 <div className="min-w-0">
-                  <p className="text-xs text-slate-400">Net versé au propriétaire · {cap(moisNom(versement.mois))} {versement.mois.slice(0, 4)}</p>
-                  <p className="font-display text-3xl font-bold tabular-nums text-emerald-600 sm:text-4xl">{money(c.net)}</p>
+                  <p className="text-xs text-slate-500">Net versé au propriétaire · {cap(moisNom(versement.mois))} {versement.mois.slice(0, 4)}</p>
+                  <p className="font-display text-3xl font-bold tabular-nums text-emerald-700 sm:text-4xl">{money(c.net)}</p>
                   <p className="mt-1.5 text-xs italic text-slate-500">{montantEnLettres(c.net)}</p>
                 </div>
                 <span className="shrink-0 -rotate-6 rounded-lg border-2 border-emerald-600 px-3 py-1 text-sm font-bold uppercase tracking-wide text-emerald-600">Versé</span>
               </div>
 
-              <p className="mt-5 text-xs text-slate-500">Détail des recouvrements (loyers encaissés au {`5 ${moisNom(versement.mois)}`}) :</p>
-              <div className="mt-2 overflow-x-auto rounded-xl border border-slate-100">
-                <table className="w-full text-sm">
-                  <thead><tr className="bg-slate-50 text-left text-[11px] uppercase text-slate-400"><th className="px-3 py-2">Locataire</th><th className="px-3 py-2">Local</th><th className="px-3 py-2">Loyer</th><th className="px-3 py-2 text-right">Montant</th></tr></thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {c.items.length === 0 ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Aucun recouvrement.</td></tr> : c.items.map((x) => (
-                      <tr key={x.id}><td className="px-3 py-2 text-slate-700">{nom(x.locataireId)}</td><td className="px-3 py-2 text-slate-500">{localNom(x.localId)}</td><td className="px-3 py-2 text-slate-500">{cap(moisNom(x.mois))}</td><td className="px-3 py-2 text-right tabular-nums text-slate-900">{money(x.montant)}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
+              {/* Détail par immeuble — Ex EDG Damakania / Damakania 142, dynamique et jamais figé en dur. */}
+              <div className="mt-5 space-y-3">
+                {groupesImmeubles.map((g) => {
+                  const nbAttenduIm = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue").length;
+                  const modeLabel = g.immeuble.mode === "avance" ? "Terme en avance" : "Terme échu";
+                  const moisLabel = g.immeuble.mode === "avance" ? moisNom(versement.mois) : moisNom(shiftMonth(versement.mois, -1));
+                  const complet = g.items.length === nbAttenduIm && nbAttenduIm > 0;
+                  return (
+                    <div key={g.immeuble.id} className="overflow-hidden rounded-xl border border-slate-200">
+                      <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-2.5">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Building2 size={14} className="shrink-0 text-slate-400" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">{g.immeuble.nom}</p>
+                            <p className="text-[11px] text-slate-400">{modeLabel} — {cap(moisLabel)}</p>
+                          </div>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${complet ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{g.items.length}/{nbAttenduIm}</span>
+                      </div>
+                      {g.items.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-slate-400">Aucun recouvrement pour cet immeuble ce cycle.</p>
+                      ) : (
+                        <div className="divide-y divide-slate-100">
+                          {g.items.map((x) => (
+                            <div key={x.id} className="flex items-center justify-between px-4 py-2 text-sm"><span className="min-w-0 truncate text-slate-700">{nom(x.locataireId)} <span className="text-slate-400">· {localNom(x.localId)}</span></span><span className="shrink-0 font-medium tabular-nums text-slate-900">{money(x.montant)}</span></div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-xs"><span className="font-medium text-slate-500">Sous-total</span><span className="font-semibold tabular-nums text-slate-700">{money(g.total)}</span></div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="mt-3 space-y-1 text-sm">
-                <div className="flex justify-between"><span className="text-slate-500">Total recouvré</span><span className="font-medium tabular-nums text-slate-900">{money(c.recouvre)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Commission gestionnaire ({versement.commissionPct || 0}%)</span><span className="font-medium tabular-nums text-slate-900">− {money(c.commission)}</span></div>
+
+              {/* Bilan financier en cascade — recouvré, commission, complément éventuel, net. */}
+              <div className="mt-5 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between"><span className="text-slate-500">Total recouvré</span><span className="font-medium tabular-nums text-slate-900">{money(c.recouvre)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Commission gestionnaire ({versement.commissionPct || 0}%)</span><span className="font-medium tabular-nums text-slate-900">− {money(c.commission)}</span></div>
+                  {c.complement > 0 && (
+                    <div className="flex items-center justify-between rounded-lg bg-cyan-50 px-2.5 py-1.5"><span className="flex items-center gap-1.5 text-cyan-800"><PlusCircle size={13} /> Complément personnel ajouté</span><span className="font-semibold tabular-nums text-cyan-800">+ {money(c.complement)}</span></div>
+                  )}
+                </div>
+                <div className="mt-2.5 flex items-center justify-between border-t border-dashed border-slate-300 pt-2.5">
+                  <span className="text-sm font-semibold text-slate-700">Net versé au propriétaire</span>
+                  <span className="font-display text-lg font-bold tabular-nums text-emerald-700">{money(c.net)}</span>
+                </div>
               </div>
 
               <div className="my-5 border-t border-dashed border-slate-300" />
@@ -1940,9 +2310,9 @@ function VersementRecuModal({ versement, data, onClose }) {
           <div className="no-print mt-4 flex flex-wrap justify-end gap-2">
             <GhostBtn onClick={onClose}>Fermer</GhostBtn>
             <GhostBtn onClick={() => window.print()}><Printer size={15} /> Imprimer</GhostBtn>
-            <PrimaryBtn onClick={() => telechargerPdf(genererPdf(), fichier)}><Download size={15} /> Télécharger PDF</PrimaryBtn>
+            <PrimaryBtn onClick={() => telechargerPdf(pdfBytes, fichier)}><Download size={15} /> Télécharger PDF</PrimaryBtn>
           </div>
-          <div className="mt-4"><ShareRow phone={p.proprietaireTelephone} message={messageVersement} pdfBytes={genererPdf()} pdfFilename={fichier} /></div>
+          <div className="mt-4"><ShareRow phone={p.proprietaireTelephone} message={messageVersement} pdfBytes={pdfBytes} pdfFilename={fichier} /></div>
         </div>
       ); })()}
     </Modal>
@@ -1954,23 +2324,39 @@ function Versements({ data, setData, go }) {
   const gestionnaire = p.gestionnaire || "Sanoussy DRAMÉ";
   const proprietaire = p.proprietaire || "Elhadj Ousmane MAGASSOUBA";
   const societe = p.societe || "La gérance";
-  const modeOf = (id) => data.immeubles.find((i) => i.id === id)?.mode;
   const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "—"; };
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
-  const paidCycle = (M) => [
-    ...data.paiements.filter((x) => modeOf(x.immeubleId) === "avance" && x.mois === M && x.statut === "paye"),
-    ...data.paiements.filter((x) => modeOf(x.immeubleId) === "echu" && x.mois === shiftMonth(M, -1) && x.statut === "paye"),
-  ];
-  const calc = (v) => { const items = paidCycle(v.mois); const recouvre = items.reduce((s, x) => s + x.montant, 0); const commission = Math.round(recouvre * (v.commissionPct || 0) / 100); return { items, recouvre, commission, net: recouvre - commission }; };
   const versements = (data.versements || []).slice().sort((a, b) => b.mois.localeCompare(a.mois));
   const moisDisponibles = Array.from({ length: 8 }, (_, i) => shiftMonth(curMonth, -i)).filter((m) => !(data.versements || []).some((v) => v.mois === m));
   const [recu, setRecu] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addMois, setAddMois] = useState(moisDisponibles[0] || curMonth);
   const [addPct, setAddPct] = useState(p.commissionPct ?? 0);
-  const gen = () => { if (!addMois) return; setData((d) => { const vs = d.versements || []; if (vs.some((v) => v.mois === addMois)) return d; return { ...d, versements: [...vs, { id: uid(), mois: addMois, date: `${addMois}-10`, commissionPct: +addPct, statut: "en_attente" }] }; }); setAddOpen(false); };
-  const marquer = (id) => setData((d) => ({ ...d, versements: (d.versements || []).map((v) => v.id === id ? { ...v, statut: "verse" } : v) }));
+  const [addComplement, setAddComplement] = useState("");
+  const gen = () => { if (!addMois) return; setData((d) => { const vs = d.versements || []; if (vs.some((v) => v.mois === addMois)) return d; return { ...d, versements: [...vs, { id: uid(), mois: addMois, date: `${addMois}-10`, commissionPct: +addPct, complement: +addComplement || 0, statut: "en_attente" }] }; }); setAddOpen(false); };
+  // Marquer un versement "fait" alors que tous les locataires n'ont pas payé rendrait la commission
+  // faussement comptée comme perçue dans "Mes commissions" — on prévient avant de laisser passer,
+  // sans bloquer complètement (le gestionnaire peut avoir une bonne raison de le faire quand même).
+  const marquer = (id) => {
+    const v = (data.versements || []).find((x) => x.id === id);
+    const c = v && calcVersement(v, data);
+    if (v && c && !c.complete) {
+      if (!confirm(`Attention : seuls ${c.nbPayes}/${c.nbAttendu} locataires ont payé pour ce cycle.\n\nTant que tous n'ont pas payé, la commission ne sera pas comptée comme réellement perçue dans "Mes commissions".\n\nMarquer quand même ce versement comme fait ?`)) return;
+    }
+    setData((d) => ({ ...d, versements: (d.versements || []).map((x) => x.id === id ? { ...x, statut: "verse" } : x) }));
+  };
   const del = (id) => setData((d) => ({ ...d, versements: (d.versements || []).filter((v) => v.id !== id) }));
+  // Complément personnel : ce que le gestionnaire ajoute de sa poche quand la collecte ne suffit pas
+  // à couvrir le montant total dû au propriétaire, pour pouvoir quand même verser la somme complète
+  // le 10. Distinct de la commission (qui ne porte que sur le vrai loyer recouvré).
+  const [editCompl, setEditCompl] = useState(null); // le versement en cours d'édition, ou null
+  const [complValeur, setComplValeur] = useState("");
+  const ouvrirComplement = (v, c) => { setEditCompl(v); setComplValeur(String(v.complement || c.manque || "")); };
+  const sauvegarderComplement = () => {
+    const montant = Math.max(0, +complValeur || 0);
+    setData((d) => ({ ...d, versements: (d.versements || []).map((x) => x.id === editCompl.id ? { ...x, complement: montant } : x) }));
+    setEditCompl(null);
+  };
 
   return (
     <div className="space-y-4">
@@ -1979,35 +2365,51 @@ function Versements({ data, setData, go }) {
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-50"><Banknote size={20} className="text-teal-700" /></div>
           <div className="min-w-0"><p className="text-slate-900"><span className="font-semibold">{gestionnaire}</span> <span className="text-slate-400">(gestionnaire)</span> → <span className="font-semibold">{proprietaire}</span> <span className="text-slate-400">(propriétaire)</span></p><p className="text-xs text-slate-400">Versement le 10 de chaque mois · {societe}</p></div>
         </div>
-        <PrimaryBtn onClick={() => { setAddMois(moisDisponibles[0] || ""); setAddPct(p.commissionPct ?? 0); setAddOpen(true); }}><Plus size={16} /> Nouveau versement</PrimaryBtn>
+        <PrimaryBtn onClick={() => { setAddMois(moisDisponibles[0] || ""); setAddPct(p.commissionPct ?? 0); setAddComplement(""); setAddOpen(true); }}><Plus size={16} /> Nouveau versement</PrimaryBtn>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
-        {versements.length === 0 ? <div className="px-5 py-10 text-center text-sm text-slate-400">Aucun versement.</div> : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400"><th className="px-5 py-3">Période</th><th className="px-5 py-3">Date</th><th className="px-5 py-3 text-right">Recouvré</th><th className="px-5 py-3 text-right">Commission</th><th className="px-5 py-3 text-right">Net versé</th><th className="px-5 py-3">Statut</th><th className="px-5 py-3 text-right">Actions</th></tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {versements.map((v) => { const c = calc(v); return (
-                  <tr key={v.id} className="hover:bg-slate-50/60">
-                    <td className="whitespace-nowrap px-5 py-3.5 font-medium text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</td>
-                    <td className="whitespace-nowrap px-5 py-3.5 text-slate-500">{v.date}</td>
-                    <td className="px-5 py-3.5 text-right tabular-nums text-slate-900">{money(c.recouvre)}</td>
-                    <td className="px-5 py-3.5 text-right tabular-nums text-slate-500">{money(c.commission)}</td>
-                    <td className="px-5 py-3.5 text-right font-display font-semibold tabular-nums text-emerald-600">{money(c.net)}</td>
-                    <td className="px-5 py-3.5">{v.statut === "verse" ? <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Versé</span> : <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" />En attente</span>}</td>
-                    <td className="px-5 py-3.5"><div className="flex items-center justify-end gap-1">
-                      <button onClick={() => setRecu(v)} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200"><Receipt size={14} /> Reçu</button>
-                      {v.statut !== "verse" && <button onClick={() => marquer(v.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600" title="Marquer versé"><Check size={15} /></button>}
-                      <button onClick={() => del(v.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
-                    </div></td>
-                  </tr>
-                ); })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {versements.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-10 text-center text-sm text-slate-400 shadow-sm">Aucun versement.</div>
+      ) : (
+        <div className="space-y-3">
+          {versements.map((v) => { const c = calcVersement(v, data); return (
+            <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
+                  <p className="text-xs text-slate-400">Versement du {v.date} · {c.nbPayes}/{c.nbAttendu} locataires payés</p>
+                </div>
+                {v.statut === "verse" && c.complete ? (
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Versé</span>
+                ) : v.statut === "verse" ? (
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20"><AlertTriangle size={11} />Collecte incomplète</span>
+                ) : (
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" />En attente</span>
+                )}
+              </div>
+
+              <div className="mt-3.5 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center">
+                <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Recouvré</p><p className="mt-0.5 text-sm font-medium tabular-nums text-slate-900">{money(c.recouvre)}</p></div>
+                <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Commission</p><p className="mt-0.5 text-sm font-medium tabular-nums text-slate-500">{money(c.commission)}</p></div>
+                <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Net versé</p><p className="mt-0.5 font-display text-sm font-semibold tabular-nums text-emerald-600">{money(c.net)}</p></div>
+              </div>
+
+              {(c.manque > 0 || c.complement > 0) && (
+                <button onClick={() => ouvrirComplement(v, c)} className="mt-2.5 flex w-full items-center justify-between gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2.5 text-left hover:bg-cyan-100">
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-cyan-800"><PlusCircle size={13} /> {c.complement > 0 ? `Vous avez ajouté ${money(c.complement)} de votre poche` : `Il manque ${money(c.manque)} sur ce cycle`}</span>
+                  <Pencil size={13} className="shrink-0 text-cyan-600" />
+                </button>
+              )}
+
+              <div className="mt-3.5 flex items-center gap-2">
+                <button onClick={() => setRecu(v)} className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800"><Receipt size={14} /> Voir le reçu</button>
+                {v.statut !== "verse" && <button onClick={() => marquer(v.id)} className="rounded-lg border border-slate-200 p-2 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600" title="Marquer versé"><Check size={16} /></button>}
+                <button onClick={() => del(v.id)} className="rounded-lg border border-slate-200 p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Supprimer"><Trash2 size={16} /></button>
+              </div>
+            </div>
+          ); })}
+        </div>
+      )}
 
       <VersementRecuModal versement={recu} data={data} onClose={() => setRecu(null)} />
 
@@ -2019,15 +2421,278 @@ function Versements({ data, setData, go }) {
             <>
               <Field label="Période (cycle recouvré)"><select className={inputCls} value={addMois} onChange={(e) => setAddMois(e.target.value)}>{moisDisponibles.map((m) => <option key={m} value={m}>{cap(moisNom(m))} {m.slice(0, 4)}</option>)}</select></Field>
               <Field label="Commission gestionnaire (%)"><input type="number" inputMode="numeric" min="0" max="100" className={inputCls} value={addPct || ""} placeholder="0" onChange={(e) => setAddPct(Math.max(0, Math.min(100, +e.target.value)))} /></Field>
-              <p className="text-xs text-slate-400">Le montant recouvré est calculé automatiquement à partir des loyers encaissés du cycle.</p>
+              <Field label="Complément personnel (GNF) — si vous devez avancer la différence"><input type="number" inputMode="numeric" min="0" className={inputCls} value={addComplement} placeholder="0" onChange={(e) => setAddComplement(e.target.value)} /></Field>
+              <p className="text-xs text-slate-400">Le montant recouvré est calculé automatiquement à partir des loyers encaissés du cycle. Si la collecte ne couvre pas tout, indiquez ici ce que vous ajoutez de votre poche pour verser la somme complète — vous pourrez aussi le renseigner plus tard.</p>
             </>
           )}
         </div>
         <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setAddOpen(false)}>Annuler</GhostBtn><PrimaryBtn onClick={gen} disabled={!addMois}>Créer le versement</PrimaryBtn></div>
       </Modal>
+
+      <Modal open={!!editCompl} onClose={() => setEditCompl(null)} title="Complément personnel">
+        {editCompl && (() => { const c = calcVersement(editCompl, data); return (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">Pour {cap(moisNom(editCompl.mois))} {editCompl.mois.slice(0, 4)}, le montant total dû au propriétaire est de <span className="font-semibold text-slate-700">{money(c.montantAttendu)}</span>, et {money(c.recouvre)} a été recouvré auprès des locataires — {c.manque > 0 ? <>il manque <span className="font-semibold text-rose-600">{money(c.manque)}</span> pour verser la somme complète.</> : "la collecte couvre déjà tout."}</p>
+            <Field label="Montant que vous avez ajouté de votre poche (GNF)"><input type="number" inputMode="numeric" min="0" className={inputCls} value={complValeur} onChange={(e) => setComplValeur(e.target.value)} placeholder="0" /></Field>
+            <p className="text-xs text-slate-400">Ce montant s'ajoute au net versé, sans jamais entrer dans le calcul de votre commission — qui ne porte que sur les vrais loyers recouvrés.</p>
+          </div>
+        ); })()}
+        <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setEditCompl(null)}>Annuler</GhostBtn><PrimaryBtn onClick={sauvegarderComplement}>Enregistrer</PrimaryBtn></div>
+      </Modal>
     </div>
   );
 }
+
+/* ============================ Mes commissions ============================
+   Vue dédiée aux commissions du gestionnaire : distincte du module Versements
+   (qui se concentre sur ce qui part au propriétaire), celle-ci se concentre sur
+   ce que le gestionnaire perçoit — déjà déduit ou pas encore — et ce qu'il en a
+   personnellement consommé, avec catégories, historique modifiable, filtre par
+   année et un aperçu de l'évolution mensuelle.
+   Réutilise calcVersement, seule source de vérité du calcul de commission. */
+function MesCommissions({ data, setData, go, isDark }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [editId, setEditId] = useState(null); // "new" ou l'id d'une consommation en cours de modification
+  const [filtreAnnee, setFiltreAnnee] = useState("all");
+  const blankConso = { date: new Date().toISOString().slice(0, 10), montant: "", motif: "", categorie: CONSO_CATS[0] };
+  const [form, setForm] = useState(blankConso);
+
+  const p = data.parametres || {};
+  const gestionnaire = p.gestionnaire || "Sanoussy DRAMÉ";
+
+  // Historique complet (non filtré) — sert au solde, qui est toujours une valeur globale réelle,
+  // jamais limitée à une année choisie (sinon le chiffre affiché mentirait sur ce qu'il reste).
+  // Règle métier : la commission n'est réellement perçue que lorsque TOUS les locataires du cycle
+  // ont payé (c.complete) — un versement marqué fait sur une collecte partielle ne compte pas encore.
+  const lignesToutes = (data.versements || []).slice().sort((a, b) => b.mois.localeCompare(a.mois)).map((v) => ({ v, c: calcVersement(v, data) }));
+  const totalDeduitToutes = lignesToutes.filter((l) => l.v.statut === "verse" && l.c.complete).reduce((s, l) => s + l.c.commission, 0);
+  const consommationsToutes = (data.consommations || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const totalConsommeToutes = consommationsToutes.reduce((s, c) => s + c.montant, 0);
+  const solde = totalDeduitToutes - totalConsommeToutes;
+
+  // Ce que le gestionnaire a personnellement ajouté pour compléter des versements, tous mois
+  // confondus — distinct de "Consommée" : ceci est de l'argent avancé, pas dépensé.
+  const totalComplementToutes = lignesToutes.reduce((s, l) => s + (l.c.complement || 0), 0);
+
+  // Années disponibles pour le filtre, déduites des vraies données (versements + consommations).
+  const annees = Array.from(new Set([...lignesToutes.map((l) => l.v.mois.slice(0, 4)), ...consommationsToutes.map((c) => c.date.slice(0, 4))])).sort((a, b) => b.localeCompare(a));
+
+  // Vues filtrées par année, pour les listes détaillées et les cartes de synthèse.
+  // Trois états, pas deux : une collecte partielle marquée "versé" n'est ni vraiment déduite,
+  // ni simplement "en attente" — elle mérite son propre signalement pour ne pas induire en erreur.
+  const lignes = filtreAnnee === "all" ? lignesToutes : lignesToutes.filter((l) => l.v.mois.startsWith(filtreAnnee));
+  const consommations = filtreAnnee === "all" ? consommationsToutes : consommationsToutes.filter((c) => c.date.startsWith(filtreAnnee));
+  const deduites = lignes.filter((l) => l.v.statut === "verse" && l.c.complete);
+  const incompletes = lignes.filter((l) => l.v.statut === "verse" && !l.c.complete);
+  const nonDeduites = lignes.filter((l) => l.v.statut !== "verse");
+  const totalDeduit = deduites.reduce((s, l) => s + l.c.commission, 0);
+  const totalNonDeduit = nonDeduites.reduce((s, l) => s + l.c.commission, 0);
+  const totalConsomme = consommations.reduce((s, c) => s + c.montant, 0);
+  const totalComplement = lignes.reduce((s, l) => s + (l.c.complement || 0), 0);
+
+  // Répartition des consommations par catégorie, pour la période filtrée.
+  const parCategorie = {};
+  consommations.forEach((c) => { const cat = c.categorie || "Autre"; parCategorie[cat] = (parCategorie[cat] || 0) + c.montant; });
+  const categoriesTriees = Object.entries(parCategorie).sort((a, b) => b[1] - a[1]);
+
+  // Évolution des 6 derniers mois — toujours sur cette fenêtre glissante, indépendamment du filtre
+  // par année ci-dessus (qui concerne l'historique détaillé, pas cet aperçu de tendance récente).
+  const serieMois = Array.from({ length: 6 }, (_, i) => shiftMonth(curMonth, -(5 - i)));
+  const serieCommission = serieMois.map((m) => {
+    const v = (data.versements || []).find((x) => x.mois === m);
+    return v ? calcVersement(v, data).commission : 0;
+  });
+  const maxSerie = Math.max(1, ...serieCommission);
+
+  const ouvrirAjout = () => { setForm(blankConso); setEditId("new"); setAddOpen(true); };
+  const ouvrirModif = (c) => { setForm({ date: c.date, montant: String(c.montant), motif: c.motif, categorie: c.categorie || CONSO_CATS[0] }); setEditId(c.id); setAddOpen(true); };
+  const sauvegarderConsommation = () => {
+    const montant = +form.montant;
+    if (!montant || montant <= 0) return;
+    const rec = { date: form.date, montant, motif: form.motif.trim() || "Non précisé", categorie: form.categorie || "Autre" };
+    setData((d) => {
+      const existantes = d.consommations || [];
+      const consommations = editId === "new" ? [...existantes, { id: uid(), ...rec }] : existantes.map((c) => (c.id === editId ? { ...c, ...rec } : c));
+      return { ...d, consommations };
+    });
+    setAddOpen(false);
+  };
+  const supprimerConsommation = (id) => setData((d) => ({ ...d, consommations: (d.consommations || []).filter((c) => c.id !== id) }));
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display text-xl font-semibold text-slate-900">Mes commissions</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Vos commissions de gestion, et ce que vous en avez consommé — {gestionnaire}.</p>
+        </div>
+        {annees.length > 0 && (
+          <select className={`${inputCls} w-auto`} value={filtreAnnee} onChange={(e) => setFiltreAnnee(e.target.value)}>
+            <option value="all">Toutes les années</option>
+            {annees.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        )}
+      </div>
+
+      {/* Solde disponible : toujours global, jamais filtré par année — c'est la question centrale. */}
+      <div className={`rounded-2xl border p-5 shadow-sm ${solde < 0 ? "border-rose-200 bg-rose-50" : "border-teal-700 bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-700"}`}>
+        <p className={`text-xs font-medium uppercase tracking-wide ${solde < 0 ? "text-rose-600" : "text-teal-100"}`}>Solde disponible</p>
+        <p className={`mt-1 font-display text-3xl font-bold tabular-nums sm:text-4xl ${solde < 0 ? "text-rose-700" : "text-white"}`}>{money(solde)}</p>
+        <p className={`mt-1.5 text-xs ${solde < 0 ? "text-rose-600" : "text-teal-100/80"}`}>
+          {solde < 0 ? "Attention : vous avez consommé plus que ce que vous avez perçu." : "Commissions déjà déduites, moins ce que vous avez consommé — toutes années confondues."}
+        </p>
+      </div>
+
+      {incompletes.length > 0 && (
+        <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-orange-800"><AlertTriangle size={15} /> {incompletes.length} versement(s) marqué(s) fait(s) sans collecte complète</p>
+          <p className="mt-1 text-xs text-orange-700">Tant que tous les locataires du cycle n'ont pas payé, cette commission n'est pas comptée dans votre solde disponible. Vérifiez : {incompletes.map((l) => `${cap(moisNom(l.v.mois))} (${l.c.nbPayes}/${l.c.nbAttendu} payés)`).join(", ")}.</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-xs font-medium text-emerald-700">Déjà déduite</p>
+          <p className="mt-1 font-display text-lg font-bold tabular-nums text-emerald-700 sm:text-xl">{money(totalDeduit)}</p>
+          <p className="mt-0.5 text-[11px] text-emerald-600">{deduites.length} versement(s), collecte complète{filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
+        </div>
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+          <p className="text-xs font-medium text-rose-700">Consommée</p>
+          <p className="mt-1 font-display text-lg font-bold tabular-nums text-rose-700 sm:text-xl">{money(totalConsomme)}</p>
+          <p className="mt-0.5 text-[11px] text-rose-600">{consommations.length} entrée(s){filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
+        </div>
+        <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
+          <p className="flex items-center gap-1 text-xs font-medium text-cyan-700"><PlusCircle size={12} /> Complété (ma poche)</p>
+          <p className="mt-1 font-display text-lg font-bold tabular-nums text-cyan-700 sm:text-xl">{money(totalComplement)}</p>
+          <p className="mt-0.5 text-[11px] text-cyan-600">{lignes.filter((l) => l.c.complement > 0).length} versement(s) complété(s){filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
+        </div>
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-xs font-medium text-amber-700">Non déduite</p>
+          <p className="mt-1 font-display text-lg font-bold tabular-nums text-amber-700 sm:text-xl">{money(totalNonDeduit)}</p>
+          <p className="mt-0.5 text-[11px] text-amber-600">{nonDeduites.length} versement(s){filtreAnnee !== "all" ? ` · ${filtreAnnee}` : ""}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm">
+          <p className="text-xs font-medium text-slate-400">Taux actuel</p>
+          <p className="mt-1 font-display text-lg font-bold tabular-nums text-slate-900 sm:text-xl">{p.commissionPct ?? 0}%</p>
+          <p className="mt-0.5 text-[11px] text-slate-400">réglable dans Paramètres</p>
+        </div>
+      </div>
+
+      {/* Évolution des 6 derniers mois — mini-graphique en barres, sans dépendance de bibliothèque
+          supplémentaire (juste des divs proportionnées), cohérent avec le style épuré de l'app. */}
+      <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-slate-700">Évolution sur 6 mois</h3>
+        <div className="mt-4 flex items-end gap-3 sm:gap-4">
+          {serieMois.map((m, i) => (
+            <div key={m} className="flex flex-1 flex-col items-center gap-1.5">
+              <span className="text-[10px] font-medium tabular-nums text-slate-500">{serieCommission[i] > 0 ? moneyC(serieCommission[i]) : "—"}</span>
+              <div className="flex h-24 w-full items-end overflow-hidden rounded-md bg-slate-50">
+                <div className="w-full rounded-t-md bg-gradient-to-t from-teal-700 to-emerald-500 transition-all" style={{ height: `${Math.max(4, (serieCommission[i] / maxSerie) * 100)}%` }} />
+              </div>
+              <span className="text-[10px] text-slate-400">{cap(moisNom(m)).slice(0, 3)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Répartition des consommations par catégorie, pour la période affichée. */}
+      {categoriesTriees.length > 0 && (
+        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-700">Répartition par catégorie{filtreAnnee !== "all" ? ` — ${filtreAnnee}` : ""}</h3>
+          <div className="mt-3 space-y-2.5">
+            {categoriesTriees.map(([cat, montant]) => (
+              <div key={cat} className="flex items-center gap-3">
+                <span className={`w-28 shrink-0 rounded-full px-2.5 py-0.5 text-center text-xs font-medium ${CONSO_CAT_CLS[cat] || "bg-slate-100 text-slate-600"}`}>{cat}</span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-rose-400" style={{ width: `${Math.max(3, (montant / totalConsomme) * 100)}%` }} /></div>
+                <span className="w-24 shrink-0 text-right text-xs font-medium tabular-nums text-slate-700">{money(montant)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-700">Ce que j'ai consommé</h3>
+          <button onClick={ouvrirAjout} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800"><Plus size={14} /> Noter une dépense</button>
+        </div>
+        {consommations.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-8 text-center text-sm text-slate-400 shadow-sm">Rien noté{filtreAnnee !== "all" ? ` pour ${filtreAnnee}` : " pour l'instant"}.</div>
+        ) : (
+          <div className="space-y-2">
+            {consommations.map((c) => (
+              <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white p-3.5 shadow-sm">
+                <button onClick={() => ouvrirModif(c)} className="min-w-0 flex-1 text-left">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium text-slate-900">{c.motif}</p>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${CONSO_CAT_CLS[c.categorie] || "bg-slate-100 text-slate-600"}`}>{c.categorie || "Autre"}</span>
+                  </div>
+                  <p className="text-xs text-slate-400">{dateFr(c.date)}</p>
+                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="font-display text-sm font-semibold tabular-nums text-rose-600">− {money(c.montant)}</span>
+                  <button onClick={() => ouvrirModif(c)} className="rounded-lg p-1.5 text-slate-400 hover:bg-teal-50 hover:text-teal-700" title="Modifier"><Pencil size={15} /></button>
+                  <button onClick={() => supprimerConsommation(c.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Supprimer"><Trash2 size={15} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-700">Historique des commissions</h3>
+        {lignes.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-10 text-center text-sm text-slate-400 shadow-sm">
+            {filtreAnnee !== "all" ? `Aucun versement en ${filtreAnnee}.` : (
+              <>
+                Aucune donnée pour l'instant.
+                <button onClick={() => go("versements")} className="mt-2 block font-medium text-teal-700 hover:underline">Créer un versement →</button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {lignes.map(({ v, c }) => (
+              <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
+                    <p className="text-xs text-slate-400">Taux appliqué : {v.commissionPct || 0}% · {c.nbPayes}/{c.nbAttendu} locataires payés</p>
+                  </div>
+                  {v.statut === "verse" && c.complete ? (
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Déduite</span>
+                  ) : v.statut === "verse" ? (
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20"><span className="h-1.5 w-1.5 rounded-full bg-orange-500" />Collecte incomplète</span>
+                  ) : (
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Non déduite</span>
+                  )}
+                </div>
+                <div className={`mt-3.5 grid gap-2 rounded-xl bg-slate-50 p-3 text-center ${c.complement > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Base recouvrée</p><p className="mt-0.5 text-sm font-medium tabular-nums text-slate-900">{money(c.recouvre)}</p></div>
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Ma commission</p><p className="mt-0.5 font-display text-sm font-semibold tabular-nums text-teal-700">{money(c.commission)}</p></div>
+                  {c.complement > 0 && <div><p className="flex items-center justify-center gap-0.5 text-[10px] uppercase tracking-wide text-cyan-600"><PlusCircle size={10} /> Complété</p><p className="mt-0.5 font-display text-sm font-semibold tabular-nums text-cyan-700">{money(c.complement)}</p></div>}
+                </div>
+                <button onClick={() => go("versements")} className="mt-3 text-xs font-medium text-teal-700 hover:underline">Voir le versement →</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title={editId === "new" ? "Noter une consommation" : "Modifier la consommation"}>
+        <div className="space-y-4">
+          <Field label="Date"><DateField value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+          <Field label="Montant (GNF)"><input type="number" inputMode="numeric" className={inputCls} value={form.montant} onChange={(e) => setForm({ ...form, montant: e.target.value })} placeholder="0" /></Field>
+          <Field label="Catégorie"><select className={inputCls} value={form.categorie} onChange={(e) => setForm({ ...form, categorie: e.target.value })}>{CONSO_CATS.map((c) => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="Motif"><input className={inputCls} value={form.motif} onChange={(e) => setForm({ ...form, motif: e.target.value })} placeholder="Ex : frais de transport, achat matériel…" /></Field>
+        </div>
+        <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setAddOpen(false)}>Annuler</GhostBtn><PrimaryBtn onClick={sauvegarderConsommation}>Enregistrer</PrimaryBtn></div>
+      </Modal>
+    </div>
+  );
+}
+
 
 /* ============================ Rapports ============================ */
 function Rapports({ data, isDark }) {
@@ -2253,12 +2918,12 @@ function Depenses({ data, setData, go }) {
               <tbody className="divide-y divide-slate-100">
                 {list.map((d) => (
                   <tr key={d.id} className="group hover:bg-slate-50/60">
-                    <td className="whitespace-nowrap px-5 py-3.5 text-slate-500">{d.date}</td>
+                    <td className="whitespace-nowrap px-5 py-3.5 text-slate-500">{dateFr(d.date)}</td>
                     <td className="px-5 py-3.5"><span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"><Tag size={11} />{d.categorie}</span></td>
                     <td className="px-5 py-3.5 font-medium text-slate-900">{d.libelle}</td>
                     <td className="px-5 py-3.5 text-slate-500"><button onClick={() => go("immeuble", d.immeubleId)} className="hover:text-teal-700">{imNom(d.immeubleId)}</button>{d.localId ? <span className="text-slate-400"> · {localNom(d.localId)}</span> : null}</td>
                     <td className="whitespace-nowrap px-5 py-3.5 text-right font-display font-semibold tabular-nums text-rose-600">{money(d.montant)}</td>
-                    <td className="px-5 py-3.5"><div className="flex justify-end gap-1 opacity-0 transition group-hover:opacity-100"><button onClick={() => open(d)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button><button onClick={() => del(d.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button></div></td>
+                    <td className="px-5 py-3.5"><div className="flex justify-end gap-1 transition"><button onClick={() => open(d)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button><button onClick={() => del(d.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -2313,9 +2978,9 @@ function Documents({ data, setData, go }) {
             <div className="mt-1 space-y-0.5 text-xs text-slate-400">
               {d.localId && <button onClick={() => go("local", d.localId)} className="block truncate hover:text-teal-700">{localNom(d.localId)}</button>}
               {d.locataireId && <button onClick={() => go("locataire", d.locataireId)} className="block truncate hover:text-teal-700">{locNom(d.locataireId)}</button>}
-              <span className="block">{d.date}</span>
+              <span className="block">{dateFr(d.date)}</span>
             </div>
-            <div className="mt-3 flex justify-end gap-1 border-t border-slate-100 pt-3 opacity-0 transition group-hover:opacity-100">
+            <div className="mt-3 flex justify-end gap-1 border-t border-slate-100 pt-3 transition">
               <button onClick={() => open(d)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
               <button onClick={() => del(d.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
             </div>
@@ -2582,15 +3247,22 @@ Si la demande ne correspond à aucune de ces actions, utilise "aucune" et expliq
 Données actuelles : ${JSON.stringify(ctx)}`;
     try {
       const res = await fetch("/.netlify/functions/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system, message: clean }) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json();
+      const d = await res.json().catch(() => null);
+      if (!res.ok) {
+        // Faire remonter le vrai message (de notre fonction, ou de l'API Anthropic elle-même
+        // si la requête l'a atteinte mais a été refusée) plutôt qu'un message générique qui
+        // masquerait la cause réelle — d.error peut être une chaîne (nos propres erreurs) ou
+        // un objet {message} (erreurs Anthropic renvoyées telles quelles).
+        const detail = (typeof d?.error === "string" ? d.error : d?.error?.message) || `HTTP ${res.status}`;
+        throw new Error(detail);
+      }
       let raw = (d.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim().replace(/```json/gi, "").replace(/```/g, "").trim();
       let parsed; try { parsed = JSON.parse(raw); } catch { parsed = { reponse: raw || "Je n'ai pas compris, reformulez ?", action: "aucune", params: {} }; }
       const rep = parsed.reponse || "C'est fait.";
       let extra = null;
       if (parsed.action && parsed.action !== "aucune") { try { extra = execute(parsed.action, parsed.params || {}); } catch {} }
       setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]); speak(rep);
-    } catch { const m = "Connexion à l'assistant impossible pour le moment."; setLog((l) => [...l, { role: "ai", text: m }]); speak(m); }
+    } catch (e) { const m = `Connexion à l'assistant impossible : ${e.message || "erreur inconnue"}`; setLog((l) => [...l, { role: "ai", text: m }]); speak(m); }
     finally { setThinking(false); }
   };
 
@@ -2774,15 +3446,17 @@ const NAV = [
   { k: "paiements", label: "Paiements", icon: Wallet, grad: "from-emerald-400 to-emerald-600" },
   { k: "recouvrement", label: "Recouvrement", icon: Layers, grad: "from-cyan-400 to-cyan-600" },
   { k: "retards", label: "Locataires en retard", icon: AlertTriangle, grad: "from-red-400 to-red-600" },
+  { k: "arrieres", label: "Arriérés", icon: CalendarClock, grad: "from-pink-400 to-pink-600" },
   { k: "rappels", label: "Rappels", icon: Bell, grad: "from-amber-400 to-amber-600" },
   { k: "versements", label: "Versements", icon: Banknote, grad: "from-green-400 to-green-600" },
+  { k: "commissions", label: "Mes commissions", icon: Percent, grad: "from-lime-400 to-lime-600" },
   { k: "recus", label: "Reçus", icon: Receipt, grad: "from-fuchsia-400 to-fuchsia-600" },
   { k: "depenses", label: "Dépenses", icon: Coins, grad: "from-rose-400 to-rose-600" },
   { k: "documents", label: "Documents", icon: FolderOpen, grad: "from-indigo-400 to-indigo-600" },
   { k: "rapports", label: "Rapports", icon: BarChart3, grad: "from-purple-400 to-purple-600" },
   { k: "parametres", label: "Paramètres", icon: Settings, grad: "from-slate-400 to-slate-600" },
 ];
-const TITLES = { dashboard: "Tableau de bord", immeubles: "Immeubles", immeuble: "Immeuble", locaux: "Locaux", local: "Local", locataires: "Locataires", locataire: "Locataire", paiements: "Paiements", recouvrement: "Recouvrement", retards: "Locataires en retard", rappels: "Rappels de paiement", versements: "Versements", recus: "Reçus", depenses: "Dépenses", documents: "Documents", rapports: "Rapports", parametres: "Paramètres" };
+const TITLES = { dashboard: "Tableau de bord", immeubles: "Immeubles", immeuble: "Immeuble", locaux: "Locaux", local: "Local", locataires: "Locataires", locataire: "Locataire", paiements: "Paiements", recouvrement: "Recouvrement", retards: "Locataires en retard", arrieres: "Arriérés", rappels: "Rappels de paiement", versements: "Versements", commissions: "Mes commissions", recus: "Reçus", depenses: "Dépenses", documents: "Documents", rapports: "Rapports", parametres: "Paramètres" };
 const ROOT = { immeuble: "immeubles", local: "locaux", locataire: "locataires" };
 
 // Tiroir de navigation mobile, fermable via le bouton retour du téléphone.
@@ -2931,8 +3605,10 @@ export default function App() {
           {nav.view === "paiements" && <Paiements data={data} setData={setData} go={go} filter={paie} setFilter={setPaie} />}
           {nav.view === "recouvrement" && <Recouvrement data={data} go={go} openPaie={openPaie} />}
           {nav.view === "retards" && <Retards data={data} setData={setData} go={go} />}
+          {nav.view === "arrieres" && <Arrieres data={data} go={go} />}
           {nav.view === "rappels" && <Rappels data={data} setData={setData} go={go} />}
           {nav.view === "versements" && <Versements data={data} setData={setData} go={go} />}
+          {nav.view === "commissions" && <MesCommissions data={data} setData={setData} go={go} isDark={isDark} />}
           {nav.view === "recus" && <Recus data={data} go={go} />}
           {nav.view === "depenses" && <Depenses data={data} setData={setData} go={go} />}
           {nav.view === "documents" && <Documents data={data} setData={setData} go={go} />}
@@ -2960,12 +3636,17 @@ function FontStyles() {
     @media screen {
       .dark{color-scheme:dark}
       .dark.bg-slate-50,.dark .bg-slate-50{background-color:#0f172a}
+      .dark .bg-amber-100{background-color:rgba(245,158,11,.25)}
+      .dark .bg-emerald-100{background-color:rgba(16,185,129,.25)}
+      .dark .border-emerald-600{border-color:#059669}
       .dark.text-slate-900,.dark .text-slate-900{color:#f1f5f9}
 
       /* Surfaces */
       .dark .bg-white{background-color:#1e293b}
       .dark .bg-slate-50\/60{background-color:rgba(51,65,85,.5)}
       .dark .bg-slate-50\/70{background-color:rgba(51,65,85,.5)}
+      .dark .hover\:bg-slate-50\/60:hover{background-color:rgba(51,65,85,.6)}
+      .dark .hover\:bg-slate-50\/70:hover{background-color:rgba(51,65,85,.6)}
       .dark .bg-slate-100{background-color:#334155}
       .dark .bg-slate-200{background-color:#475569}
       .dark .hover\:bg-white:hover{background-color:#1e293b}
@@ -3010,12 +3691,17 @@ function FontStyles() {
       /* Statuts sémantiques : badges et texte d'emphase */
       .dark .bg-emerald-50{background-color:rgba(16,185,129,.15)}
       .dark .text-emerald-700{color:#6ee7b7}
+      .dark .border-emerald-200{border-color:rgba(16,185,129,.25)}
       .dark .text-emerald-600{color:#34d399}
       .dark .hover\:text-emerald-600:hover{color:#6ee7b7}
       .dark .hover\:bg-emerald-50:hover{background-color:rgba(16,185,129,.2)}
       .dark .hover\:bg-emerald-100:hover{background-color:rgba(16,185,129,.25)}
 
       .dark .bg-rose-50{background-color:rgba(244,63,94,.15)}
+      .dark .bg-pink-50{background-color:rgba(236,72,153,.15)}
+      .dark .border-pink-200{border-color:rgba(236,72,153,.25)}
+      .dark .text-pink-700{color:#f9a8d4}
+      .dark .text-pink-800{color:#fbcfe8}
       .dark .bg-rose-50\/50{background-color:rgba(244,63,94,.1)}
       .dark .bg-rose-50\/60{background-color:rgba(244,63,94,.1)}
       .dark .text-rose-700{color:#fda4af}
@@ -3028,14 +3714,22 @@ function FontStyles() {
       .dark .border-rose-300{border-color:rgba(244,63,94,.4)}
 
       .dark .bg-amber-50{background-color:rgba(245,158,11,.15)}
+      .dark .bg-orange-50{background-color:rgba(249,115,22,.15)}
+      .dark .text-orange-700{color:#fdba74}
+      .dark .text-orange-800{color:#fed7aa}
+      .dark .border-orange-200{border-color:rgba(249,115,22,.25)}
       .dark .text-amber-700{color:#fcd34d}
+      .dark .text-amber-600{color:#fbbf24}
+      .dark .border-amber-200{border-color:rgba(245,158,11,.25)}
 
       .dark .bg-indigo-50{background-color:rgba(99,102,241,.15)}
       .dark .text-indigo-700{color:#a5b4fc}
       .dark .text-indigo-600{color:#818cf8}
 
       .dark .bg-cyan-50{background-color:rgba(6,182,212,.15)}
+      .dark .border-cyan-200{border-color:rgba(6,182,212,.25)}
       .dark .text-cyan-700{color:#67e8f9}
+      .dark .text-cyan-800{color:#a5f3fc}
       .dark .text-cyan-600{color:#22d3ee}
 
       .dark .bg-violet-50\/40{background-color:rgba(139,92,246,.08)}
@@ -3043,6 +3737,12 @@ function FontStyles() {
       .dark .border-violet-200{border-color:rgba(139,92,246,.3)}
       .dark .border-violet-200\/60{border-color:rgba(139,92,246,.25)}
       .dark .hover\:bg-violet-100:hover{background-color:rgba(139,92,246,.25)}
+      .dark .hover\:bg-cyan-100:hover{background-color:rgba(6,182,212,.25)}
+      .dark .hover\:bg-pink-100:hover{background-color:rgba(236,72,153,.25)}
+      .dark .hover\:bg-rose-100:hover{background-color:rgba(244,63,94,.25)}
+      .dark .hover\:bg-teal-100:hover{background-color:rgba(20,184,166,.25)}
+      .dark .text-amber-800{color:#fde68a}
+      .dark .bg-violet-50{background-color:rgba(139,92,246,.15)}
     }
     @media print{
       body *{visibility:hidden}
