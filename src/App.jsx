@@ -787,8 +787,17 @@ function QuittanceModal({ paiement, data, onClose }) {
 function PaymentsTable({ list, data, setData, go }) {
   const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "—"; };
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
-  const encaisser = (id) => setData((d) => ({ ...d, paiements: d.paiements.map((p) => p.id === id ? { ...p, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) } : p) }));
+  const encaisser = (p) => {
+    // Ligne virtuelle (local occupé sans paiement encore saisi) → on crée le paiement.
+    if (p.virtuel || !p.id) {
+      setData((d) => ({ ...d, paiements: [...d.paiements, { id: uid(), localId: p.localId, immeubleId: p.immeubleId, locataireId: p.locataireId, mois: p.mois, montant: p.montant, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) }] }));
+      return;
+    }
+    setData((d) => ({ ...d, paiements: d.paiements.map((x) => x.id === p.id ? { ...x, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) } : x) }));
+  };
   const supprimer = (p) => {
+    // Une ligne virtuelle n'existe pas encore en base : rien à supprimer, rien à remettre.
+    if (p.virtuel || !p.id) return;
     if (p.statut === "paye") {
       // Remettre en attente plutôt que supprimer : le local reste suivi pour ce cycle
       // (montant total attendu, KPI du tableau de bord...) — seul le statut "payé" est annulé.
@@ -817,7 +826,7 @@ function PaymentsTable({ list, data, setData, go }) {
               const tel = data.locataires.find((x) => x.id === p.locataireId)?.telephone;
               const msg = `Bonjour ${nom(p.locataireId)}, voici la confirmation de réception de votre loyer pour ${moisLong(p.mois)} : ${money(p.montant)} (local ${localNom(p.localId)}), payé le ${p.datePaiement}.${arrieresLocataire(data, p.locataireId, p.id).note} Merci ! — ${signatureGestionnaire(data)}`;
               return (
-                <tr key={p.id} className="hover:bg-slate-50/60">
+                <tr key={p.id || `v-${p.localId}-${p.mois}`} className="hover:bg-slate-50/60">
                   <td className="px-5 py-3.5">{go ? <button onClick={() => go("locataire", p.locataireId)} className="font-medium text-slate-900 hover:text-teal-700">{nom(p.locataireId)}</button> : <span className="font-medium text-slate-900">{nom(p.locataireId)}</span>}</td>
                   <td className="px-5 py-3.5 text-slate-500">{go ? <button onClick={() => go("local", p.localId)} className="hover:text-teal-700">{localNom(p.localId)}</button> : localNom(p.localId)}</td>
                   <td className="px-5 py-3.5 text-slate-500">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</td>
@@ -827,8 +836,8 @@ function PaymentsTable({ list, data, setData, go }) {
                     {p.statut !== "paye"
                       ? (
                         <div className="flex items-center justify-end gap-1.5">
-                          <button onClick={() => encaisser(p.id)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"><Check size={14} /> Encaisser</button>
-                          <button onClick={() => supprimer(p)} title="Supprimer ce paiement" className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+                          <button onClick={() => encaisser(p)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"><Check size={14} /> Encaisser</button>
+                          {!p.virtuel && p.id && <button onClick={() => supprimer(p)} title="Supprimer ce paiement" className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>}
                         </div>
                       )
                       : (
@@ -1210,10 +1219,10 @@ function Locataires({ data, setData, go }) {
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {liste.map((t) => (
-          <div key={t.id} className="group rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm transition hover:shadow-md">
+          <div key={t.id} className="rounded-2xl border border-slate-200/70 bg-white p-5">
             <button onClick={() => go("locataire", t.id)} className="block w-full text-left">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-teal-500 to-teal-700 font-display text-sm font-semibold text-white">{initials(t)}</div>
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-teal-600 font-display text-sm font-semibold text-white">{initials(t)}</div>
                 <div className="min-w-0"><h3 className="truncate font-display font-semibold text-slate-900">{t.prenom} {t.nom}</h3><p className="truncate text-xs text-slate-400">{localNom(t.localId) || "Sans local"}</p></div>
               </div>
               <div className="mt-4 space-y-1.5 text-xs text-slate-500">
@@ -1221,7 +1230,7 @@ function Locataires({ data, setData, go }) {
                 <p className="flex min-w-0 items-center gap-2"><Phone size={13} className="shrink-0 text-slate-400" /><span className="truncate">{t.telephone || "—"}</span></p>
               </div>
             </button>
-            <div className="mt-3 flex justify-end gap-1 border-t border-slate-100 pt-3 transition">
+            <div className="mt-3 flex justify-end gap-1 border-t border-slate-100 pt-3">
               <button onClick={() => open(t)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
               <button onClick={() => del(t.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
             </div>
@@ -1490,11 +1499,27 @@ function Paiements({ data, setData, go, filter, setFilter }) {
   // jamais le même mois pertinent au même moment (ex. le 5 juillet : juin pour l'un,
   // juillet pour l'autre). f.mois sert alors d'ancre de cycle (son mois "avance"),
   // et on inclut pour chaque paiement le mois réellement dû par son propre immeuble.
-  const list = data.paiements
+  const moisDuLocal = (immeubleId) => f.immeuble === "all" ? (modeOf(immeubleId) === "avance" ? f.mois : shiftMonth(f.mois, -1)) : f.mois;
+  const paiementsExistants = data.paiements
     .filter((p) => f.immeuble === "all"
       ? (modeOf(p.immeubleId) === "avance" ? p.mois === f.mois : p.mois === shiftMonth(f.mois, -1))
       : p.mois === f.mois)
-    .filter((p) => f.immeuble === "all" || !f.immeuble || p.immeubleId === f.immeuble)
+    .filter((p) => f.immeuble === "all" || !f.immeuble || p.immeubleId === f.immeuble);
+
+  // Un local occupé sans ligne de paiement pour ce cycle (jamais saisi, ou paiement supprimé
+  // par erreur) doit tout de même apparaître, en attente — sinon il disparaît complètement du
+  // suivi. On génère une ligne "virtuelle" (sans id) pour chacun ; elle deviendra une vraie
+  // ligne dès qu'on l'encaisse. C'est ce qui garantit qu'aucun locataire ne peut être "perdu".
+  const locauxAvecPaiement = new Set(paiementsExistants.map((p) => p.localId));
+  const lignesVirtuelles = data.locaux
+    .filter((l) => l.statut === "loue" && !locauxAvecPaiement.has(l.id))
+    .filter((l) => f.immeuble === "all" || !f.immeuble || l.immeubleId === f.immeuble)
+    .map((l) => {
+      const t = data.locataires.find((x) => x.localId === l.id);
+      return { id: null, virtuel: true, localId: l.id, immeubleId: l.immeubleId, locataireId: t?.id || null, mois: moisDuLocal(l.immeubleId), montant: l.loyer + l.charges, statut: "en_attente", datePaiement: null };
+    });
+
+  const list = [...paiementsExistants, ...lignesVirtuelles]
     .filter((p) => (!f.statut || f.statut === "tous") ? true : f.statut === "impayes" ? p.statut !== "paye" : p.statut === f.statut)
     .slice().sort((a, b) => (a.locataireId || "").localeCompare(b.locataireId || ""));
   const enc = list.filter((p) => p.statut === "paye").reduce((s, p) => s + p.montant, 0);
@@ -2159,6 +2184,13 @@ function calcVersement(versement, data) {
   const net = recouvre - commission + complement;
   return { items, recouvre, commission, net, complete, nbPayes, nbAttendu: locauxOccupes.length, montantAttendu, complement, manque };
 }
+// Un loyer est "payé d'avance" si sa date de paiement est antérieure au 1er du mois auquel
+// il correspond (ex : loyer de juillet réglé dès juin). Sert à l'afficher à titre indicatif
+// sur les reçus, sans rien changer aux montants — le paiement est déjà compté normalement.
+function estPayeDavance(paiement) {
+  if (!paiement || paiement.statut !== "paye" || !paiement.datePaiement || !paiement.mois) return false;
+  return paiement.datePaiement < `${paiement.mois}-01`;
+}
 function genererVersementPdf(versement, data) {
   const p = data.parametres || {};
   const gestionnaire = p.gestionnaire || "Sanoussy DRAMÉ";
@@ -2221,6 +2253,7 @@ function genererVersementPdf(versement, data) {
     } else {
       for (const x of g.items) {
         ops.push({ type: "text", x: 58, y, size: 9, font: "R", color: [0.2, 0.2, 0.2], text: nom(x.locataireId) });
+        if (estPayeDavance(x)) ops.push({ type: "text", x: 58 + Math.min(180, nom(x.locataireId).length * 5 + 6), y, size: 7, font: "R", color: [0.05, 0.35, 0.45], text: "(payé d'avance)" });
         ops.push({ type: "text", x: 280, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: localNom(x.localId) });
         ops.push({ type: "text", x: 460, y, size: 9, font: "R", color: [0.1, 0.1, 0.1], text: money(x.montant) });
         y -= 15;
@@ -2360,7 +2393,7 @@ function VersementRecuModal({ versement, data, onClose }) {
                       ) : (
                         <div className="divide-y divide-slate-100">
                           {g.items.map((x) => (
-                            <div key={x.id} className="flex items-center justify-between px-4 py-2 text-sm"><span className="min-w-0 truncate text-slate-700">{nom(x.locataireId)} <span className="text-slate-400">· {localNom(x.localId)}</span></span><span className="shrink-0 font-medium tabular-nums text-slate-900">{money(x.montant)}</span></div>
+                            <div key={x.id} className="flex items-center justify-between px-4 py-2 text-sm"><span className="min-w-0 truncate text-slate-700">{nom(x.locataireId)} <span className="text-slate-400">· {localNom(x.localId)}</span>{estPayeDavance(x) && <span className="ml-1.5 rounded bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700">payé d'avance</span>}</span><span className="shrink-0 font-medium tabular-nums text-slate-900">{money(x.montant)}</span></div>
                           ))}
                         </div>
                       )}
@@ -3437,8 +3470,7 @@ Données actuelles : ${JSON.stringify(ctx)}`;
           </div>
         </>
       )}
-      <button onClick={() => setOpen((o) => !o)} className="group fixed bottom-6 right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-violet-500 via-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-500/40 transition hover:scale-105 sm:right-6">
-        <span className={`absolute inset-0 rounded-full bg-violet-500 ${listening ? "animate-ping opacity-60" : "opacity-0"}`} />
+      <button onClick={() => setOpen((o) => !o)} className="fixed bottom-6 right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white shadow-lg transition hover:scale-105 sm:right-6">
         {listening ? <Mic size={22} className="relative" /> : <Sparkles size={22} className="relative" />}
       </button>
     </>
