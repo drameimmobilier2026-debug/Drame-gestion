@@ -8,7 +8,7 @@ import {
   Home, Building2, DoorOpen, Users, Wallet, BarChart3, Mic, Send, Plus, Search,
   LogOut, X, Check, AlertTriangle, TrendingUp, Sparkles, Volume2, VolumeX, Pencil,
   Trash2, Receipt, Menu, Phone, Mail, MapPin, ChevronRight, ArrowLeft, ArrowUpRight,
-  CalendarClock, Calendar, ArrowDownRight, Layers, Coins, FolderOpen, Settings, FileText, Tag, Upload, RotateCcw, Bell, Banknote, Sun, Moon, Monitor, MessageCircle, MessageSquare, Share2, Printer, Download, Percent, PlusCircle,
+  CalendarClock, CalendarCheck, Calendar, ArrowDownRight, Layers, Coins, FolderOpen, Settings, FileText, Tag, Upload, RotateCcw, Bell, Banknote, Sun, Moon, Monitor, MessageCircle, MessageSquare, Share2, Printer, Download, Percent, PlusCircle,
 } from "lucide-react";
 
 /* ============================ Helpers ============================ */
@@ -493,6 +493,15 @@ function Dashboard({ data, go, isDark }) {
   const nbSeveres = Object.values(parLocataireArrieres).filter((n) => n >= 3).length;
   const nbEnArrieres = Object.keys(parLocataireArrieres).length;
 
+  // Locataires en avance (au moins 2 mois consécutifs déjà payés à partir du cycle en cours) —
+  // simple comptage pour la bannière, le détail complet vit dans le module Avances.
+  const nbEnAvance = data.locaux.filter((l) => l.statut === "loue").filter((l) => {
+    const moisDepart = modeOf(l.immeubleId) === "avance" ? moisAvance : moisEchu;
+    let cursor = moisDepart, n = 0;
+    while (paiements.some((x) => x.localId === l.id && x.mois === cursor && x.statut === "paye")) { n++; cursor = shiftMonth(cursor, 1); }
+    return n > 1;
+  }).length;
+
   const kpis = [
     { label: "Taux d'occupation", value: `${tauxOcc}%`, sub: `${occ}/${locaux.length} locaux`, icon: TrendingUp, grad: "from-teal-400 to-teal-600", go: () => go("locaux") },
     { label: "Impayés du cycle", value: moneyC(impayeTotal), sub: `${aRecouvrer.length} à relancer`, icon: AlertTriangle, grad: "from-rose-400 to-rose-600", go: () => go("retards") },
@@ -562,6 +571,16 @@ function Dashboard({ data, go, isDark }) {
             {nbSeveres > 0 ? `${nbSeveres} locataire(s) en arriéré sévère (3 mois ou plus)` : `${nbEnArrieres} locataire(s) ont des mois impayés`}
           </span>
           <span className="shrink-0 text-xs font-medium text-pink-700">Voir les arriérés →</span>
+        </button>
+      )}
+
+      {nbEnAvance > 0 && (
+        <button onClick={() => go("avances")} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-left transition hover:bg-cyan-100">
+          <span className="flex items-center gap-2 text-sm font-medium text-cyan-800">
+            <CalendarCheck size={16} className="shrink-0" />
+            {nbEnAvance} locataire(s) ont déjà payé plusieurs mois d'avance
+          </span>
+          <span className="shrink-0 text-xs font-medium text-cyan-700">Voir les avances →</span>
         </button>
       )}
 
@@ -706,7 +725,7 @@ function genererQuittancePdf(paiement, data) {
   return { bytes: buildPdfBytes({ ops }), fichier: `${ref}.pdf`, ref };
 }
 
-function QuittanceModal({ paiement, data, onClose }) {
+function QuittanceModal({ paiement, data, onClose, go }) {
   const tenant = (id) => data.locataires.find((x) => x.id === id);
   const nom = (id) => { const l = tenant(id); return l ? `${l.prenom} ${l.nom}` : "—"; };
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
@@ -763,6 +782,13 @@ function QuittanceModal({ paiement, data, onClose }) {
                     <p className="mt-1 font-display text-base font-semibold tabular-nums text-amber-800">{money(totalArrieres)}</p>
                     <p className="mt-0.5 text-xs text-amber-700">Loyer(s) impayé(s) : {moisArrieres}</p>
                   </div>
+                )}
+
+                {estPayeDavance(paiement) && (
+                  <button onClick={() => go && go("avances")} className="mt-4 block w-full rounded-xl border border-cyan-200 bg-cyan-50 p-3.5 text-left transition hover:bg-cyan-100">
+                    <p className="flex items-center gap-1.5 text-xs font-semibold text-cyan-700"><CalendarCheck size={13} /> Payé d'avance</p>
+                    <p className="mt-0.5 text-xs text-cyan-700">Ce loyer a été réglé avant son mois normal — voir toutes les avances →</p>
+                  </button>
                 )}
 
                 <div className="my-5 border-t border-dashed border-slate-300" />
@@ -831,7 +857,7 @@ function PaymentsTable({ list, data, setData, go }) {
                   <td className="px-5 py-3.5 text-slate-500">{go ? <button onClick={() => go("local", p.localId)} className="hover:text-teal-700">{localNom(p.localId)}</button> : localNom(p.localId)}</td>
                   <td className="px-5 py-3.5 text-slate-500">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</td>
                   <td className="px-5 py-3.5 text-right font-display font-semibold tabular-nums text-slate-900">{money(p.montant)}</td>
-                  <td className="px-5 py-3.5"><Badge statut={p.statut} /></td>
+                  <td className="px-5 py-3.5"><div className="flex flex-wrap items-center gap-1.5"><Badge statut={p.statut} />{estPayeDavance(p) && (go ? <button onClick={() => go("avances")} className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">avance</button> : <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700">avance</span>)}</div></td>
                   <td className="px-5 py-3.5 text-right">
                     {p.statut !== "paye"
                       ? (
@@ -861,7 +887,7 @@ function PaymentsTable({ list, data, setData, go }) {
           </tbody>
         </table>
       </div>
-      <QuittanceModal paiement={quittance} data={data} onClose={() => setQuittance(null)} />
+      <QuittanceModal paiement={quittance} data={data} onClose={() => setQuittance(null)} go={go} />
     </>
   );
 }
@@ -1392,7 +1418,7 @@ function LocataireDetail({ id, data, setData, go }) {
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h3 className="font-display text-base font-semibold text-slate-900">Paiements</h3>
-            {moisAvance_count > 1 && <p className="mt-0.5 text-xs font-medium text-cyan-700">Payé d'avance jusqu'à {cap(moisNom(paieAvanceJusqua))} {paieAvanceJusqua.slice(0, 4)} ({moisAvance_count} mois)</p>}
+            {moisAvance_count > 1 && <button onClick={() => go("avances")} className="mt-0.5 text-xs font-medium text-cyan-700 hover:underline">Payé d'avance jusqu'à {cap(moisNom(paieAvanceJusqua))} {paieAvanceJusqua.slice(0, 4)} ({moisAvance_count} mois) →</button>}
           </div>
           {infoActuel && <button onClick={() => setAvanceOpen(true)} className="flex shrink-0 items-center gap-1 text-xs font-medium text-teal-700 hover:text-teal-800"><PlusCircle size={14} /> Paiement d'avance</button>}
         </div>
@@ -1471,7 +1497,14 @@ function LocataireDetail({ id, data, setData, go }) {
         {infoActuel && (
           <div className="space-y-4">
             <p className="text-sm text-slate-500">Enregistre plusieurs mois d'un coup pour <span className="font-semibold text-slate-700">{t.prenom} {t.nom}</span>, à partir de <span className="font-semibold text-slate-700">{cap(moisNom(infoActuel.mois))} {infoActuel.mois.slice(0, 4)}</span> — chaque mois reste ensuite compté normalement dans son propre versement.</p>
-            <Field label="Nombre de mois payés d'avance"><input type="number" inputMode="numeric" min="1" max="24" className={inputCls} value={nbMoisAvance} onChange={(e) => setNbMoisAvance(e.target.value)} /></Field>
+            <Field label="Mois payés d'avance">
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: 12 }, (_, i) => shiftMonth(infoActuel.mois, i)).map((m, i) => (
+                  <button key={m} type="button" onClick={() => setNbMoisAvance(i + 1)} className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${i < Math.max(1, Math.min(24, +nbMoisAvance || 1)) ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>{cap(moisNom(m)).slice(0, 3)} {m.slice(2, 4)}</button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-xs text-slate-400">Cliquez sur le dernier mois à couvrir — tout ce qui précède est inclus automatiquement.</p>
+            </Field>
             <div className="rounded-xl bg-slate-50 p-3 text-sm">
               <div className="flex justify-between"><span className="text-slate-500">Montant par mois</span><span className="font-medium tabular-nums text-slate-900">{money(infoActuel.montant)}</span></div>
               <div className="mt-1 flex justify-between border-t border-slate-200 pt-1"><span className="font-medium text-slate-700">Total à recevoir</span><span className="font-display font-semibold tabular-nums text-emerald-600">{money(infoActuel.montant * Math.max(1, Math.min(24, +nbMoisAvance || 1)))}</span></div>
@@ -1490,7 +1523,7 @@ function Paiements({ data, setData, go, filter, setFilter }) {
   const f = filter;
   const modeOf = (id) => immeubles.find((i) => i.id === id)?.mode;
   const [addOpen, setAddOpen] = useState(false);
-  const blankAdd = { localId: "", mois: curMonth, montant: 0, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) };
+  const blankAdd = { localId: "", mois: curMonth, montant: 0, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), typePaiement: "encours" };
   const [form, setForm] = useState(blankAdd);
   const [tenantQuery, setTenantQuery] = useState("");
   const [showSugg, setShowSugg] = useState(false);
@@ -1535,11 +1568,23 @@ function Paiements({ data, setData, go, filter, setFilter }) {
   };
 
   const localOccupe = data.locaux.filter((l) => l.statut === "loue");
+  // Le mois "en cours" dépend du mode de l'immeuble du local choisi (avance ou échu) — jamais
+  // le même mois-ancre pour tous, contrairement à un simple curMonth global.
+  const moisEnCoursPour = (localId) => { const l = data.locaux.find((x) => x.id === localId); return l ? (modeOf(l.immeubleId) === "avance" ? moisAvance : moisEchu) : curMonth; };
   const pickLocal = (localId) => {
     const l = data.locaux.find((x) => x.id === localId);
     const t = data.locataires.find((x) => x.localId === localId);
-    setForm((fm) => ({ ...fm, localId, montant: l ? l.loyer + l.charges : fm.montant }));
+    const moisRef = moisEnCoursPour(localId);
+    setForm((fm) => ({ ...fm, localId, montant: l ? l.loyer + l.charges : fm.montant, mois: fm.typePaiement === "encours" ? moisRef : fm.mois }));
     setTenantQuery(t ? `${t.prenom} ${t.nom}` : "");
+  };
+  // Change de précision de paiement : recalcule un mois par défaut cohérent avec la nouvelle
+  // plage (arriéré = mois passés, en cours = le mois du cycle, avance = mois futurs), et force
+  // "payé" pour une avance (par définition, une avance est déjà réglée).
+  const choisirType = (type) => {
+    const moisRef = form.localId ? moisEnCoursPour(form.localId) : curMonth;
+    const moisParDefaut = type === "avance" ? shiftMonth(moisRef, 1) : type === "arriere" ? shiftMonth(moisRef, -1) : moisRef;
+    setForm((fm) => ({ ...fm, typePaiement: type, mois: moisParDefaut, statut: type === "avance" ? "paye" : fm.statut }));
   };
   const suggestions = tenantQuery.trim()
     ? data.locataires.filter((t) => t.localId && `${t.prenom} ${t.nom}`.toLowerCase().includes(tenantQuery.trim().toLowerCase())).slice(0, 6)
@@ -1620,11 +1665,29 @@ function Paiements({ data, setData, go, filter, setFilter }) {
               </div>
             )}
           </div>
-          <Field label="Mois concerné"><select className={inputCls} value={form.mois} onChange={(e) => setForm({ ...form, mois: e.target.value })}>{Array.from({ length: 8 }, (_, i) => shiftMonth(curMonth, -i)).map((m) => <option key={m} value={m}>{cap(moisLong(m))}</option>)}</select></Field>
+          <div className="sm:col-span-2">
+            <Field label="Précision du paiement">
+              <div className="flex gap-1.5">
+                {[["arriere", "Arriéré"], ["encours", "En cours"], ["avance", "En avance"]].map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => choisirType(k)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${form.typePaiement === k ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>{l}</button>
+                ))}
+              </div>
+            </Field>
+          </div>
+          <Field label="Mois concerné">
+            {form.typePaiement === "encours" ? (
+              <input disabled className={`${inputCls} bg-slate-50 text-slate-500`} value={form.localId ? cap(moisLong(form.mois)) : "Choisissez d'abord un local"} />
+            ) : (
+              <select className={inputCls} value={form.mois} onChange={(e) => setForm({ ...form, mois: e.target.value })}>
+                {Array.from({ length: 12 }, (_, i) => form.typePaiement === "avance" ? shiftMonth(moisEnCoursPour(form.localId), i + 1) : shiftMonth(moisEnCoursPour(form.localId), -(i + 1))).map((m) => <option key={m} value={m}>{cap(moisLong(m))}</option>)}
+              </select>
+            )}
+          </Field>
           <Field label="Montant (GNF)"><input type="number" inputMode="numeric" className={inputCls} value={form.montant || ""} placeholder="0" onChange={(e) => setForm({ ...form, montant: +e.target.value })} /></Field>
-          <Field label="Statut"><select className={inputCls} value={form.statut} onChange={(e) => setForm({ ...form, statut: e.target.value })}><option value="paye">Payé</option><option value="en_attente">En attente</option><option value="en_retard">En retard</option></select></Field>
+          {form.typePaiement !== "avance" && <Field label="Statut"><select className={inputCls} value={form.statut} onChange={(e) => setForm({ ...form, statut: e.target.value })}><option value="paye">Payé</option><option value="en_attente">En attente</option><option value="en_retard">En retard</option></select></Field>}
           {form.statut === "paye" && <Field label="Date de paiement"><DateField value={form.datePaiement} onChange={(e) => setForm({ ...form, datePaiement: e.target.value })} /></Field>}
         </div>
+        {form.typePaiement === "avance" && <p className="mt-3 rounded-lg bg-cyan-50 px-3 py-2 text-xs text-cyan-700">Une avance est par définition déjà réglée — le statut est automatiquement "Payé".</p>}
         {existant && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">Un paiement existe déjà pour ce local sur {cap(moisLong(form.mois))} — il sera mis à jour (pas de doublon créé).</p>}
         <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setAddOpen(false)}>Annuler</GhostBtn><PrimaryBtn onClick={saveAdd}>Enregistrer</PrimaryBtn></div>
       </Modal>
@@ -1650,6 +1713,9 @@ function Recouvrement({ data, go, openPaie }) {
   const encAnim = useCountUp(total);
   const retards = [...echuPaie, ...avancePaie].filter((p) => p.statut !== "paye");
   const parIm = immeubles.map((im) => { const mois = im.mode === "avance" ? moisAvance : moisEchu; const pl = data.paiements.filter((p) => p.immeubleId === im.id && p.mois === mois); return { im, mois, enc: sum(pl.filter((p) => p.statut === "paye")), du: sum(pl) }; });
+  // Part de l'encaissement de ce cycle qui provient en fait d'une avance réglée plus tôt —
+  // pour ne pas laisser croire que tout vient d'un encaissement fait aujourd'hui.
+  const encDavance = sum([...avancePaie, ...echuPaie].filter((p) => p.statut === "paye" && estPayeDavance(p)));
 
   return (
     <div className="space-y-5">
@@ -1666,6 +1732,7 @@ function Recouvrement({ data, go, openPaie }) {
               <div className="text-xs font-medium uppercase tracking-wide text-teal-100/70">Encaissé · {echeanceLabel}</div>
               <div className="font-display text-3xl font-bold leading-tight tabular-nums lg:text-[2.4rem]">{money(encAnim)}</div>
               <div className="mt-1 text-xs text-teal-100/80 sm:text-sm">sur {money(attendu)} attendu · <span className="text-rose-100">{money(impaye)} en retard</span></div>
+              {encDavance > 0 && <button onClick={() => go("avances")} className="mt-1 text-xs text-cyan-100 hover:underline">dont {money(encDavance)} réglé(s) d'avance plus tôt →</button>}
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1830,6 +1897,331 @@ function Retards({ data, setData, go }) {
         <Bell size={14} className="mt-0.5 shrink-0 text-slate-400" />
         <span>Pour envoyer une relance à ces locataires, utilisez le module <button onClick={() => go("rappels")} className="font-medium text-teal-700 underline">Rappels</button> (relance automatique aux retardataires).</span>
       </div>
+    </div>
+  );
+}
+
+/* ============================ Avances de loyer ============================
+   Pendant naturel d'Arriérés : recense les locataires ayant déjà réglé un ou
+   plusieurs mois au-delà du cycle en cours. Une "avance" se lit comme des mois
+   PAYÉS consécutifs à partir du mois normalement dû par l'immeuble (avance ou
+   échu selon son mode) — un simple paiement du mois courant n'en est pas une,
+   il en faut au moins deux d'affilée. */
+const AVANCE_NIVEAU_CLS = {
+  leger: { badge: "bg-cyan-50 text-cyan-700 ring-1 ring-inset ring-cyan-600/20", dot: "bg-cyan-500", label: "2 mois" },
+  bon: { badge: "bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-600/20", dot: "bg-teal-500", label: "3 mois" },
+  fort: { badge: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20", dot: "bg-emerald-500", label: "4+ mois" },
+};
+
+function Avances({ data, setData, go }) {
+  const modeOf = (id) => data.immeubles.find((i) => i.id === id)?.mode;
+  const nomT = (t) => `${t.prenom} ${t.nom}`;
+  const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
+  const imNom = (id) => data.immeubles.find((x) => x.id === id)?.nom || "—";
+  const societe = data.parametres?.societe || "DRAMÉ Gestion";
+  const [recherche, setRecherche] = useState("");
+  const [filtreImmeuble, setFiltreImmeuble] = useState("all");
+  const [tri, setTri] = useState("mois");
+  // null = aucun filtre ; "notable" = 4 mois ou plus (carte "Cas notables") ; 2/3/4/5 = exactement
+  // ce nombre de mois (5 = "5 ou plus"), piloté par un clic sur une barre du graphique.
+  const [filtreNiveau, setFiltreNiveau] = useState(null);
+  const [releve, setReleve] = useState(null);
+  const [ajoutOpen, setAjoutOpen] = useState(false);
+  const [locataireChoisi, setLocataireChoisi] = useState("");
+  const [nbMoisAjout, setNbMoisAjout] = useState(2);
+
+  // Tous les locataires occupant un local, pour le sélecteur d'ajout — n'importe lequel peut
+  // recevoir une avance, qu'il en ait déjà une en cours ou non (elle sera simplement prolongée).
+  const locatairesOptions = data.locaux.filter((l) => l.statut === "loue")
+    .map((l) => ({ local: l, tenant: data.locataires.find((t) => t.localId === l.id) }))
+    .filter((x) => x.tenant)
+    .sort((a, b) => nomT(a.tenant).localeCompare(nomT(b.tenant)));
+
+  // Enregistre N mois d'avance pour le locataire choisi, à partir du cycle en cours de son
+  // immeuble — même logique d'upsert que sur la fiche locataire (jamais de doublon : un mois
+  // déjà présent est mis à jour, pas dupliqué).
+  const ajouterAvance = () => {
+    const choix = locatairesOptions.find((x) => x.tenant.id === locataireChoisi);
+    if (!choix) return;
+    const { local, tenant } = choix;
+    const moisDepart = modeOf(local.immeubleId) === "avance" ? moisAvance : moisEchu;
+    const n = Math.max(1, Math.min(24, +nbMoisAjout || 1));
+    setData((d) => {
+      let paiements = [...d.paiements];
+      for (let i = 0; i < n; i++) {
+        const mois = shiftMonth(moisDepart, i);
+        const idx = paiements.findIndex((p) => p.localId === local.id && p.mois === mois);
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois, montant: local.loyer + local.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) };
+        if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
+      }
+      return { ...d, paiements };
+    });
+    setAjoutOpen(false);
+    setLocataireChoisi("");
+    setNbMoisAjout(2);
+  };
+
+  const avances = data.locaux.filter((l) => l.statut === "loue").map((l) => {
+    const t = data.locataires.find((x) => x.localId === l.id);
+    if (!t) return null;
+    const moisDepart = modeOf(l.immeubleId) === "avance" ? moisAvance : moisEchu;
+    let cursor = moisDepart, dernierPaye = null, lignes = [];
+    while (true) {
+      const p = data.paiements.find((x) => x.localId === l.id && x.mois === cursor && x.statut === "paye");
+      if (!p) break;
+      dernierPaye = cursor; lignes.push(p); cursor = shiftMonth(cursor, 1);
+    }
+    if (lignes.length <= 1) return null; // le mois courant seul n'est pas une avance
+    const niveau = lignes.length >= 4 ? "fort" : lignes.length === 3 ? "bon" : "leger";
+    // Date du règlement le plus ancien de la série — équivalent, côté avance, de
+    // l'"ancienneté" d'un arriéré : depuis quand ce coussin d'avance existe.
+    const payeLe = lignes.reduce((min, p) => (!min || (p.datePaiement && p.datePaiement < min) ? p.datePaiement : min), null);
+    return { local: l, tenant: t, immeubleId: l.immeubleId, moisDepart, dernierPaye, lignes, nbMois: lignes.length, montantTotal: lignes.reduce((s, p) => s + p.montant, 0), niveau, payeLe };
+  }).filter(Boolean);
+
+  let filtres = avances
+    .filter((a) => filtreImmeuble === "all" || a.immeubleId === filtreImmeuble)
+    .filter((a) => !recherche.trim() || nomT(a.tenant).toLowerCase().includes(recherche.trim().toLowerCase()))
+    .filter((a) => filtreNiveau === null || (filtreNiveau === "notable" ? a.nbMois >= 4 : filtreNiveau === 5 ? a.nbMois >= 5 : a.nbMois === filtreNiveau));
+  filtres = filtres.slice().sort((a, b) => tri === "montant" ? b.montantTotal - a.montantTotal : tri === "mois" ? b.nbMois - a.nbMois : nomT(a.tenant).localeCompare(nomT(b.tenant)));
+
+  const totalAvance = avances.reduce((s, a) => s + a.montantTotal, 0);
+  const plusAvance = avances.length ? avances.slice().sort((a, b) => b.nbMois - a.nbMois)[0] : null;
+  const notables = avances.filter((a) => a.nbMois >= 4).length;
+
+  // Répartition par nombre de mois d'avance, pour le mini-graphique — mêmes divs
+  // proportionnées que le reste de l'app, sans bibliothèque supplémentaire.
+  const paliers = [2, 3, 4, 5];
+  const distribution = paliers.map((n) => ({ label: n === 5 ? "5+" : `${n} mois`, count: avances.filter((a) => (n === 5 ? a.nbMois >= 5 : a.nbMois === n)).length }));
+  const maxDistrib = Math.max(1, ...distribution.map((d) => d.count));
+
+  const messagePour = (a) => `Bonjour ${nomT(a.tenant)}, nous confirmons la bonne réception de votre loyer d'avance : ${a.nbMois} mois réglés jusqu'à ${cap(moisNom(a.dernierPaye))} ${a.dernierPaye.slice(0, 4)} inclus, pour un total de ${money(a.montantTotal)}. Merci pour votre confiance ! — ${signatureGestionnaire(data)}`;
+
+  const genererRelevePdf = (a) => {
+    const ref = `AV-${curMonth.replace("-", "")}-${a.tenant.id.slice(-4).toUpperCase()}`;
+    const ops = [
+      { type: "rect", x: 0, y: 700, w: 595, h: 142, color: [0.03, 0.32, 0.36] },
+      { type: "text", x: 50, y: 803, size: 18, font: "B", color: [1, 1, 1], text: societe },
+      { type: "text", x: 50, y: 778, size: 10, font: "R", color: [0.82, 0.94, 0.96], text: "RELEVÉ D'AVANCE DE LOYER" },
+      { type: "text", x: 460, y: 803, size: 9, font: "R", color: [0.82, 0.94, 0.96], text: "N°" },
+      { type: "text", x: 460, y: 790, size: 11, font: "B", color: [1, 1, 1], text: ref },
+      { type: "text", x: 50, y: 660, size: 11, font: "R", color: [0.35, 0.35, 0.35], text: "Concernant" },
+      { type: "text", x: 50, y: 638, size: 17, font: "B", color: [0.05, 0.05, 0.08], text: nomT(a.tenant) },
+      { type: "text", x: 50, y: 617, size: 10, font: "R", color: [0.4, 0.4, 0.4], text: `Local ${localNom(a.local.id)} · ${imNom(a.immeubleId)}` },
+      { type: "rect", x: 50, y: 552, w: 495, h: 48, color: [0.9, 0.97, 0.98] },
+      { type: "text", x: 65, y: 578, size: 20, font: "B", color: [0.02, 0.4, 0.45], text: money(a.montantTotal) },
+      { type: "text", x: 65, y: 562, size: 9, font: "R", color: [0.4, 0.5, 0.5], text: `${a.nbMois} mois payés d'avance, jusqu'à ${cap(moisNom(a.dernierPaye))} ${a.dernierPaye.slice(0, 4)} inclus — ${montantEnLettres(a.montantTotal)}` },
+      { type: "text", x: 50, y: 520, size: 10, font: "B", color: [0.3, 0.3, 0.3], text: "Détail par mois :" },
+    ];
+    let y = 500;
+    ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
+    a.lignes.forEach((p) => {
+      ops.push({ type: "text", x: 50, y, size: 10, font: "R", color: [0.2, 0.2, 0.2], text: `${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}` });
+      ops.push({ type: "text", x: 460, y, size: 10, font: "R", color: [0.1, 0.1, 0.1], text: money(p.montant) });
+      y -= 20;
+    });
+    ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
+    y -= 25;
+    ops.push({ type: "text", x: 50, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: `Relevé émis le ${dateFr(new Date().toISOString().slice(0, 10))}.` });
+    y -= 25;
+    ops.push({ type: "text", x: 50, y, size: 9, font: "B", color: [0.2, 0.2, 0.2], text: signatureGestionnaire(data) });
+    return { bytes: buildPdfBytes({ ops }), fichier: `${ref}.pdf`, ref };
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">Locataires ayant déjà réglé un ou plusieurs mois au-delà du cycle en cours.</p>
+        <button onClick={() => setAjoutOpen(true)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-teal-800"><Plus size={15} /> Ajouter une avance</button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <button onClick={() => setFiltreNiveau(null)} className={`rounded-2xl border border-slate-200/70 bg-white p-5 text-left shadow-sm transition hover:bg-slate-50 ${filtreNiveau === null ? "ring-2 ring-offset-1 ring-cyan-400" : ""}`}>
+          <div className="text-xs font-medium text-slate-500">Locataires en avance</div>
+          <div className="mt-2 font-display text-2xl font-semibold text-cyan-600">{avances.length}</div>
+        </button>
+        <button onClick={() => setFiltreNiveau(filtreNiveau === "notable" ? null : "notable")} className={`rounded-2xl border border-slate-200/70 bg-white p-5 text-left shadow-sm transition hover:bg-slate-50 ${filtreNiveau === "notable" ? "ring-2 ring-offset-1 ring-emerald-400" : ""}`}>
+          <div className="text-xs font-medium text-slate-500">Cas notables (4+ mois)</div>
+          <div className="mt-2 font-display text-2xl font-semibold text-emerald-600">{notables}</div>
+        </button>
+        <button onClick={() => plusAvance && go("locataire", plusAvance.tenant.id)} className="rounded-2xl border border-slate-200/70 bg-white p-5 text-left shadow-sm transition hover:bg-slate-50">
+          <div className="text-xs font-medium text-slate-500">Le plus en avance</div>
+          <div className="mt-2 font-display text-2xl font-semibold text-cyan-600">{plusAvance ? `${plusAvance.nbMois} mois` : "—"}</div>
+          {plusAvance && <div className="mt-0.5 truncate text-[11px] text-slate-400">{nomT(plusAvance.tenant)} →</div>}
+        </button>
+        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+          <div className="text-xs font-medium text-slate-500">Total avancé</div>
+          <div className="mt-2 font-display text-2xl font-semibold tabular-nums text-cyan-600">{moneyC(totalAvance)}</div>
+        </div>
+      </div>
+
+      {avances.length > 0 && (
+        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-700">Répartition par nombre de mois</h3>
+            {filtreNiveau !== null && <button onClick={() => setFiltreNiveau(null)} className="text-xs font-medium text-teal-700 hover:underline">Retirer le filtre ×</button>}
+          </div>
+          <div className="mt-4 flex items-end gap-3 sm:gap-4">
+            {distribution.map((d, i) => { const palier = i + 2; const actif = filtreNiveau === palier; return (
+              <button key={d.label} onClick={() => d.count > 0 && setFiltreNiveau(actif ? null : palier)} disabled={d.count === 0} className={`flex flex-1 flex-col items-center gap-1.5 rounded-lg p-1 transition ${d.count > 0 ? "hover:bg-slate-50" : "cursor-default"} ${actif ? "bg-cyan-50" : ""}`}>
+                <span className={`text-[10px] font-medium tabular-nums ${actif ? "text-cyan-700" : "text-slate-500"}`}>{d.count > 0 ? d.count : "—"}</span>
+                <div className="flex h-20 w-full items-end overflow-hidden rounded-md bg-slate-50">
+                  <div className={`w-full rounded-t-md transition-all ${actif ? "bg-gradient-to-t from-cyan-700 to-cyan-500" : "bg-gradient-to-t from-cyan-600 to-teal-400"}`} style={{ height: `${d.count > 0 ? Math.max(6, (d.count / maxDistrib) * 100) : 0}%` }} />
+                </div>
+                <span className={`text-[10px] ${actif ? "font-semibold text-cyan-700" : "text-slate-400"}`}>{d.label}</span>
+              </button>
+            ); })}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Rechercher un locataire…" className={`${inputCls} pl-9`} />
+        </div>
+        {data.immeubles.length > 1 && (
+          <select value={filtreImmeuble} onChange={(e) => setFiltreImmeuble(e.target.value)} className={`${inputCls} sm:w-52`}>
+            <option value="all">Tous les immeubles</option>
+            {data.immeubles.map((im) => <option key={im.id} value={im.id}>{im.nom}</option>)}
+          </select>
+        )}
+      </div>
+
+      {avances.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-slate-500">Trier par :</span>
+          {[["mois", "Nombre de mois"], ["montant", "Montant"], ["nom", "Nom"]].map(([k, l]) => (
+            <button key={k} onClick={() => setTri(k)} className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${tri === k ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>{l}</button>
+          ))}
+        </div>
+      )}
+
+      {filtres.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-12 text-center text-sm text-slate-400 shadow-sm">
+          {avances.length === 0 ? "Aucun locataire en avance pour l'instant." : filtreNiveau !== null ? "Aucun résultat pour ce filtre." : "Aucun résultat pour cette recherche."}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtres.map((a) => {
+            const nv = AVANCE_NIVEAU_CLS[a.niveau];
+            const tel = a.tenant.telephone;
+            return (
+              <div key={a.tenant.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <button onClick={() => go("locataire", a.tenant.id)} className="flex min-w-0 items-center gap-3 text-left">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-semibold text-white">{initials(a.tenant)}</div>
+                    <div className="min-w-0">
+                      <p className="truncate font-display font-semibold text-slate-900">{nomT(a.tenant)}</p>
+                      <button onClick={(e) => { e.stopPropagation(); go("immeuble", a.immeubleId); }} className="truncate text-xs text-slate-400 hover:text-teal-700 hover:underline">{localNom(a.local.id)} · {imNom(a.immeubleId)}</button>
+                    </div>
+                  </button>
+                  <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${nv.badge}`}><span className={`h-1.5 w-1.5 rounded-full ${nv.dot}`} />{a.nbMois} mois</span>
+                </div>
+
+                <div className="mt-3.5 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center">
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Payé depuis le</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{a.payeLe ? dateFr(a.payeLe) : "—"}</p></div>
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Payé jusqu'à</p><p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{cap(moisNom(a.dernierPaye))} {a.dernierPaye.slice(0, 4)}</p></div>
+                  <div><p className="text-[10px] uppercase tracking-wide text-slate-400">Total avancé</p><p className="mt-0.5 font-display text-sm font-semibold tabular-nums text-cyan-700">{money(a.montantTotal)}</p></div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {a.lignes.map((p) => <button key={p.id} onClick={() => go("versements")} title="Voir dans Versements" className="rounded-full bg-cyan-50 px-2.5 py-0.5 text-[11px] font-medium text-cyan-700 hover:bg-cyan-100">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</button>)}
+                </div>
+
+                <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                  <button onClick={() => setReleve(a)} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800"><FileText size={14} /> Relevé PDF</button>
+                  <a href={tel ? waLink(tel, messagePour(a)) : undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (!tel) e.preventDefault(); }} title={tel ? "" : "Aucun numéro enregistré"} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white ${tel ? "bg-emerald-600 hover:bg-emerald-700" : "cursor-not-allowed bg-slate-200 text-slate-400"}`}><MessageCircle size={14} /> Confirmer</a>
+                  <button onClick={() => go("locataire", a.tenant.id)} className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200">Fiche</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal open={!!releve} onClose={() => setReleve(null)} title="Relevé d'avance de loyer">
+        {releve && (() => {
+          const { bytes, fichier, ref } = genererRelevePdf(releve);
+          const tel = releve.tenant.telephone;
+          return (
+            <div>
+              <div className="print-area overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="relative overflow-hidden bg-gradient-to-br from-teal-800 via-cyan-700 to-teal-700 px-6 py-5 text-white">
+                  <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "radial-gradient(circle, #fff 1.5px, transparent 1.5px)", backgroundSize: "16px 16px" }} />
+                  <div className="relative flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2"><div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/15"><CalendarCheck size={16} /></div><span className="truncate font-display text-lg font-bold">{societe}</span></div>
+                      <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.2em] text-cyan-100/80">Relevé d'avance de loyer</p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-[10px] uppercase tracking-wide text-cyan-100/70">N°</div>
+                      <div className="font-display text-sm font-semibold tabular-nums">{ref}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="px-6 py-6">
+                  <p className="text-xs text-slate-400">Concernant</p>
+                  <p className="mt-1 font-display text-lg font-bold text-slate-900">{nomT(releve.tenant)}</p>
+                  <p className="text-sm text-slate-500">{localNom(releve.local.id)} · {imNom(releve.immeubleId)}</p>
+                  <div className="mt-5 rounded-2xl bg-cyan-50 p-5">
+                    <p className="font-display text-3xl font-bold tabular-nums text-cyan-700">{money(releve.montantTotal)}</p>
+                    <p className="mt-1.5 text-xs text-cyan-600">{releve.nbMois} mois payés d'avance, jusqu'à {cap(moisNom(releve.dernierPaye))} {releve.dernierPaye.slice(0, 4)} inclus — {montantEnLettres(releve.montantTotal)}</p>
+                  </div>
+                  <p className="mt-5 text-xs font-medium text-slate-500">Détail par mois</p>
+                  <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100">
+                    {releve.lignes.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between px-4 py-2.5 text-sm"><span className="text-slate-700">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span><span className="font-medium tabular-nums text-slate-900">{money(p.montant)}</span></div>
+                    ))}
+                  </div>
+                  <p className="mt-5 text-xs text-slate-400">Relevé émis le {dateFr(new Date().toISOString().slice(0, 10))}.</p>
+                </div>
+              </div>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <button onClick={() => { const b = new Blob([bytes], { type: "application/pdf" }); const u = URL.createObjectURL(b); const el = document.createElement("a"); el.href = u; el.download = fichier; el.click(); URL.revokeObjectURL(u); }} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-teal-800"><Download size={15} /> Télécharger</button>
+                <a href={tel ? waLink(tel, messagePour(releve)) : undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (!tel) e.preventDefault(); }} className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold text-white ${tel ? "bg-emerald-600 hover:bg-emerald-700" : "cursor-not-allowed bg-slate-200 text-slate-400"}`}><MessageCircle size={15} /> WhatsApp</a>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      <Modal open={ajoutOpen} onClose={() => setAjoutOpen(false)} title="Ajouter une avance">
+        <div className="space-y-4">
+          <Field label="Locataire">
+            <select className={inputCls} value={locataireChoisi} onChange={(e) => setLocataireChoisi(e.target.value)}>
+              <option value="">Choisir un locataire…</option>
+              {locatairesOptions.map(({ local, tenant }) => <option key={tenant.id} value={tenant.id}>{nomT(tenant)} — {local.nom} ({imNom(local.immeubleId)})</option>)}
+            </select>
+          </Field>
+          {locataireChoisi && (() => {
+            const choix = locatairesOptions.find((x) => x.tenant.id === locataireChoisi);
+            if (!choix) return null;
+            const montant = choix.local.loyer + choix.local.charges;
+            const n = Math.max(1, Math.min(24, +nbMoisAjout || 1));
+            const moisDepart = modeOf(choix.local.immeubleId) === "avance" ? moisAvance : moisEchu;
+            const moisFin = shiftMonth(moisDepart, n - 1);
+            return (
+              <>
+                <Field label="Mois payés d'avance">
+                  <div className="flex flex-wrap gap-1.5">
+                    {Array.from({ length: 12 }, (_, i) => shiftMonth(moisDepart, i)).map((m, i) => (
+                      <button key={m} type="button" onClick={() => setNbMoisAjout(i + 1)} className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${i < n ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>{cap(moisNom(m)).slice(0, 3)} {m.slice(2, 4)}</button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-xs text-slate-400">Cliquez sur le dernier mois à couvrir — tout ce qui précède est inclus automatiquement.</p>
+                </Field>
+                <div className="rounded-xl bg-slate-50 p-3 text-sm">
+                  <div className="flex justify-between"><span className="text-slate-500">Montant par mois</span><span className="font-medium tabular-nums text-slate-900">{money(montant)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Période couverte</span><span className="font-medium text-slate-900">{cap(moisNom(moisDepart))} {moisDepart.slice(0, 4)} → {cap(moisNom(moisFin))} {moisFin.slice(0, 4)}</span></div>
+                  <div className="mt-1 flex justify-between border-t border-slate-200 pt-1"><span className="font-medium text-slate-700">Total à recevoir</span><span className="font-display font-semibold tabular-nums text-emerald-600">{money(montant * n)}</span></div>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+        <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setAjoutOpen(false)}>Annuler</GhostBtn><PrimaryBtn onClick={ajouterAvance} disabled={!locataireChoisi}>Enregistrer</PrimaryBtn></div>
+      </Modal>
     </div>
   );
 }
@@ -2049,7 +2441,7 @@ function Rappels({ data, setData, go }) {
   const [copied, setCopied] = useState(false);
 
   const tenants = data.locataires.filter((t) => t.localId);
-  const infoFor = (t) => { const l = data.locaux.find((x) => x.id === t.localId); if (!l) return null; const mode = modeOf(l.immeubleId); const mois = mode === "avance" ? moisAvance : moisEchu; const pay = data.paiements.find((x) => x.localId === l.id && x.mois === mois); return { local: l, mois, montant: l.loyer + l.charges, statut: pay ? pay.statut : "en_attente" }; };
+  const infoFor = (t) => { const l = data.locaux.find((x) => x.id === t.localId); if (!l) return null; const mode = modeOf(l.immeubleId); const mois = mode === "avance" ? moisAvance : moisEchu; const pay = data.paiements.find((x) => x.localId === l.id && x.mois === mois); return { local: l, mois, montant: l.loyer + l.charges, statut: pay ? pay.statut : "en_attente", datePaiement: pay?.datePaiement || null }; };
   const build = (tpl, t, info) => buildRappelMessage(tpl, t, info, societe);
   const lastRappel = (id) => { const rs = (data.rappels || []).filter((r) => r.locataireId === id); return rs.length ? rs.slice().sort((a, b) => b.date.localeCompare(a.date))[0].date : null; };
   const saveTpl = () => { setData((d) => ({ ...d, parametres: { ...(d.parametres || {}), rappelGeneral: tplG, rappelRetard: tplR } })); setToast("Modèles enregistrés"); setTimeout(() => setToast(""), 2000); };
@@ -2127,7 +2519,7 @@ function Rappels({ data, setData, go }) {
               {modal.recipients.map((r, i) => (
                 <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-slate-700">{r.t.prenom} {r.t.nom}</span>
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">{r.t.prenom} {r.t.nom}{estPayeDavance(r.info) && <button onClick={() => go("avances")} className="rounded-full bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">déjà payé d'avance</button>}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-400">{r.t.telephone || "sans numéro"}</span>
                       <a
@@ -2508,6 +2900,7 @@ function Versements({ data, setData, go }) {
                 <div>
                   <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
                   <p className="text-xs text-slate-400">Versement du {v.date} · {c.nbPayes}/{c.nbAttendu} locataires payés</p>
+                  {(() => { const nbAv = c.items.filter(estPayeDavance).length; return nbAv > 0 && <button onClick={() => go("avances")} className="mt-0.5 text-xs text-cyan-700 hover:underline">dont {nbAv} payé(s) d'avance →</button>; })()}
                 </div>
                 {v.statut === "verse" && c.complete ? (
                   <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Versé</span>
@@ -2810,6 +3203,7 @@ function MesCommissions({ data, setData, go, isDark }) {
                   <div>
                     <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
                     <p className="text-xs text-slate-400">Taux appliqué : {v.commissionPct || 0}% · {c.nbPayes}/{c.nbAttendu} locataires payés</p>
+                    {(() => { const nbAv = c.items.filter(estPayeDavance).length; return nbAv > 0 && <button onClick={() => go("avances")} className="mt-0.5 text-xs text-cyan-700 hover:underline">dont {nbAv} payé(s) d'avance →</button>; })()}
                   </div>
                   {v.statut === "verse" && c.complete ? (
                     <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Déduite</span>
@@ -2982,7 +3376,7 @@ function Recus({ data, go }) {
                         <td className="px-5 py-3.5"><button onClick={() => go("locataire", p.locataireId)} className="font-medium text-slate-900 hover:text-teal-700">{nom(p.locataireId)}</button></td>
                         <td className="px-5 py-3.5 text-slate-500"><button onClick={() => go("local", p.localId)} className="hover:text-teal-700">{localNom(p.localId)}</button></td>
                         <td className="px-5 py-3.5 text-slate-500">{imNom(p.immeubleId)}</td>
-                        <td className="px-5 py-3.5 text-slate-500">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</td>
+                        <td className="px-5 py-3.5 text-slate-500"><span>{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span>{estPayeDavance(p) && <button onClick={() => go("avances")} className="ml-1.5 rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">avance</button>}</td>
                         <td className="whitespace-nowrap px-5 py-3.5 text-slate-500">{p.datePaiement || "—"}</td>
                         <td className="px-5 py-3.5 text-right font-display font-semibold tabular-nums text-slate-900">{money(p.montant)}</td>
                         <td className="px-5 py-3.5 text-right">
@@ -3026,7 +3420,7 @@ function Recus({ data, go }) {
         </div>
       )}
 
-      <QuittanceModal paiement={quittance} data={data} onClose={() => setQuittance(null)} />
+      <QuittanceModal paiement={quittance} data={data} onClose={() => setQuittance(null)} go={go} />
       <VersementRecuModal versement={recu} data={data} onClose={() => setRecu(null)} />
     </div>
   );
@@ -3597,6 +3991,7 @@ const NAV = [
   { k: "recouvrement", label: "Recouvrement", icon: Layers, grad: "from-cyan-400 to-cyan-600" },
   { k: "retards", label: "Locataires en retard", icon: AlertTriangle, grad: "from-red-400 to-red-600" },
   { k: "arrieres", label: "Arriérés", icon: CalendarClock, grad: "from-pink-400 to-pink-600" },
+  { k: "avances", label: "Avances", icon: CalendarCheck, grad: "from-cyan-400 to-cyan-600" },
   { k: "rappels", label: "Rappels", icon: Bell, grad: "from-amber-400 to-amber-600" },
   { k: "versements", label: "Versements", icon: Banknote, grad: "from-green-400 to-green-600" },
   { k: "commissions", label: "Mes commissions", icon: Percent, grad: "from-lime-400 to-lime-600" },
@@ -3606,7 +4001,7 @@ const NAV = [
   { k: "rapports", label: "Rapports", icon: BarChart3, grad: "from-purple-400 to-purple-600" },
   { k: "parametres", label: "Paramètres", icon: Settings, grad: "from-slate-400 to-slate-600" },
 ];
-const TITLES = { dashboard: "Tableau de bord", immeubles: "Immeubles", immeuble: "Immeuble", locaux: "Locaux", local: "Local", locataires: "Locataires", locataire: "Locataire", paiements: "Paiements", recouvrement: "Recouvrement", retards: "Locataires en retard", arrieres: "Arriérés", rappels: "Rappels de paiement", versements: "Versements", commissions: "Mes commissions", recus: "Reçus", depenses: "Dépenses", documents: "Documents", rapports: "Rapports", parametres: "Paramètres" };
+const TITLES = { dashboard: "Tableau de bord", immeubles: "Immeubles", immeuble: "Immeuble", locaux: "Locaux", local: "Local", locataires: "Locataires", locataire: "Locataire", paiements: "Paiements", recouvrement: "Recouvrement", retards: "Locataires en retard", arrieres: "Arriérés", avances: "Avances de loyer", rappels: "Rappels de paiement", versements: "Versements", commissions: "Mes commissions", recus: "Reçus", depenses: "Dépenses", documents: "Documents", rapports: "Rapports", parametres: "Paramètres" };
 const ROOT = { immeuble: "immeubles", local: "locaux", locataire: "locataires" };
 
 // Tiroir de navigation mobile, fermable via le bouton retour du téléphone.
@@ -3756,6 +4151,7 @@ export default function App() {
           {nav.view === "recouvrement" && <Recouvrement data={data} go={go} openPaie={openPaie} />}
           {nav.view === "retards" && <Retards data={data} setData={setData} go={go} />}
           {nav.view === "arrieres" && <Arrieres data={data} go={go} />}
+          {nav.view === "avances" && <Avances data={data} setData={setData} go={go} />}
           {nav.view === "rappels" && <Rappels data={data} setData={setData} go={go} />}
           {nav.view === "versements" && <Versements data={data} setData={setData} go={go} />}
           {nav.view === "commissions" && <MesCommissions data={data} setData={setData} go={go} isDark={isDark} />}
