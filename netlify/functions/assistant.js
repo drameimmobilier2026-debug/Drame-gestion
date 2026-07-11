@@ -8,8 +8,11 @@
 //
 // Les fonctions Netlify synchrones ont une limite dure de 10 secondes — au-delà, Netlify tue
 // le processus et renvoie un 502 générique, sans laisser la moindre chance à notre propre
-// gestion d'erreur de s'exécuter. On se protège avec un délai contrôlé à 8s : si l'IA met plus
-// longtemps à répondre, on l'interrompt nous-mêmes et on renvoie un message clair là-dessus.
+// gestion d'erreur de s'exécuter. Le délai contrôlé ci-dessous est fixé à 6s (pas 8s) pour
+// laisser de la marge au démarrage à froid de la fonction elle-même, qui peut consommer 1 à 3s
+// avant même que ce code ne commence à s'exécuter — sans cette marge, notre propre délai peut
+// se déclencher trop tard, après que Netlify ait déjà tué le processus (d'où un 502 muet malgré
+// notre gestion d'erreur).
 exports.handler = async (event) => {
   try {
     if (event.httpMethod !== "POST") {
@@ -35,7 +38,7 @@ exports.handler = async (event) => {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
     let res;
     try {
       res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -47,7 +50,7 @@ exports.handler = async (event) => {
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
-          max_tokens: 300, // réponses courtes par design (1-2 phrases) — inutile de permettre plus, ça ne fait qu'allonger le pire des cas
+          max_tokens: 200, // réponses courtes par design (1-2 phrases) — resserré encore pour réduire le pire des cas
           system,
           messages: [{ role: "user", content: message }],
         }),
@@ -55,7 +58,7 @@ exports.handler = async (event) => {
       });
     } catch (e) {
       if (e.name === "AbortError") {
-        return { statusCode: 504, body: JSON.stringify({ error: "L'IA a mis plus de 8 secondes à répondre — réessayez avec une question plus courte." }) };
+        return { statusCode: 504, body: JSON.stringify({ error: "L'IA a mis plus de 6 secondes à répondre (probablement un démarrage à froid de la fonction) — réessayez, la seconde tentative est généralement plus rapide." }) };
       }
       throw e;
     } finally {

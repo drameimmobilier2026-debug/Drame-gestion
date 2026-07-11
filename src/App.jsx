@@ -1305,9 +1305,11 @@ function LocataireDetail({ id, data, setData, go }) {
   const [rappelModal, setRappelModal] = useState(null);
   const [avanceOpen, setAvanceOpen] = useState(false);
   const [nbMoisAvance, setNbMoisAvance] = useState(1);
+  const [ajoutAuCycleLoc, setAjoutAuCycleLoc] = useState(false); // Oui/Non — voir enregistrerAvance
   // Enregistre plusieurs mois d'avance en une fois (ex: un locataire paie juillet + août +
   // septembre le même jour) — crée ou met à jour chaque mois individuellement, payé aujourd'hui.
-  // Chaque mois garde ensuite son propre versement normal, sans rien changer à ce calcul.
+  // Si ajoutAuCycleLoc, tous ces mois sont rattachés (verseAvec) au cycle de versement en cours
+  // au lieu d'attendre leur propre échéance naturelle — voir calcVersement pour la règle exacte.
   const enregistrerAvance = () => {
     if (!l || !infoActuel) return;
     const n = Math.max(1, Math.min(24, +nbMoisAvance || 1));
@@ -1316,13 +1318,14 @@ function LocataireDetail({ id, data, setData, go }) {
       for (let i = 0; i < n; i++) {
         const mois = shiftMonth(infoActuel.mois, i);
         const idx = paiements.findIndex((p) => p.localId === l.id && p.mois === mois);
-        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + l.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) };
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + l.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycleLoc ? curMonth : null };
         if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
       }
       return { ...d, paiements };
     });
     setAvanceOpen(false);
     setNbMoisAvance(1);
+    setAjoutAuCycleLoc(false);
   };
 
   const del = () => { delLocataire(setData, id); go("locataires"); };
@@ -1496,7 +1499,7 @@ function LocataireDetail({ id, data, setData, go }) {
       <Modal open={avanceOpen} onClose={() => setAvanceOpen(false)} title="Paiement d'avance">
         {infoActuel && (
           <div className="space-y-4">
-            <p className="text-sm text-slate-500">Enregistre plusieurs mois d'un coup pour <span className="font-semibold text-slate-700">{t.prenom} {t.nom}</span>, à partir de <span className="font-semibold text-slate-700">{cap(moisNom(infoActuel.mois))} {infoActuel.mois.slice(0, 4)}</span> — chaque mois reste ensuite compté normalement dans son propre versement.</p>
+            <p className="text-sm text-slate-500">Enregistre plusieurs mois d'un coup pour <span className="font-semibold text-slate-700">{t.prenom} {t.nom}</span>, à partir de <span className="font-semibold text-slate-700">{cap(moisNom(infoActuel.mois))} {infoActuel.mois.slice(0, 4)}</span>.</p>
             <Field label="Mois payés d'avance">
               <div className="flex flex-wrap gap-1.5">
                 {Array.from({ length: 12 }, (_, i) => shiftMonth(infoActuel.mois, i)).map((m, i) => (
@@ -1509,6 +1512,13 @@ function LocataireDetail({ id, data, setData, go }) {
               <div className="flex justify-between"><span className="text-slate-500">Montant par mois</span><span className="font-medium tabular-nums text-slate-900">{money(infoActuel.montant)}</span></div>
               <div className="mt-1 flex justify-between border-t border-slate-200 pt-1"><span className="font-medium text-slate-700">Total à recevoir</span><span className="font-display font-semibold tabular-nums text-emerald-600">{money(infoActuel.montant * Math.max(1, Math.min(24, +nbMoisAvance || 1)))}</span></div>
             </div>
+            <Field label="Ajouter cette avance au recouvrement en cours ?">
+              <div className="flex gap-1.5">
+                <button type="button" onClick={() => setAjoutAuCycleLoc(true)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${ajoutAuCycleLoc ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>Oui</button>
+                <button type="button" onClick={() => setAjoutAuCycleLoc(false)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${!ajoutAuCycleLoc ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>Non</button>
+              </div>
+              <p className="mt-1.5 text-xs text-slate-400">{ajoutAuCycleLoc ? `Oui : les ${Math.max(1, Math.min(24, +nbMoisAvance || 1))} mois sont ajoutés au recouvrement du cycle en cours, versés au propriétaire dès ce mois-ci.` : "Non : le paiement reste enregistré en avance ; chaque mois comptera normalement à sa propre échéance, sans rien changer au recouvrement en cours."}</p>
+            </Field>
           </div>
         )}
         <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setAvanceOpen(false)}>Annuler</GhostBtn><PrimaryBtn onClick={enregistrerAvance}>Enregistrer</PrimaryBtn></div>
@@ -1929,6 +1939,7 @@ function Avances({ data, setData, go }) {
   const [ajoutOpen, setAjoutOpen] = useState(false);
   const [locataireChoisi, setLocataireChoisi] = useState("");
   const [nbMoisAjout, setNbMoisAjout] = useState(2);
+  const [ajoutAuCycle, setAjoutAuCycle] = useState(false); // Oui/Non — voir ajouterAvance ci-dessous
 
   // Tous les locataires occupant un local, pour le sélecteur d'ajout — n'importe lequel peut
   // recevoir une avance, qu'il en ait déjà une en cours ou non (elle sera simplement prolongée).
@@ -1951,7 +1962,11 @@ function Avances({ data, setData, go }) {
       for (let i = 0; i < n; i++) {
         const mois = shiftMonth(moisDepart, i);
         const idx = paiements.findIndex((p) => p.localId === local.id && p.mois === mois);
-        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois, montant: local.loyer + local.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) };
+        // verseAvec (toujours curMonth, quel que soit le mode avance/échu — c'est l'étiquette du
+        // cycle de versement actif, pas le mois de loyer) : si "Oui", TOUS les mois de cette
+        // avance sont rattachés au versement en cours, et ne seront plus jamais recomptés à leur
+        // propre échéance naturelle. Si "Non", chaque mois garde son cycle naturel (inchangé).
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois, montant: local.loyer + local.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycle ? curMonth : null };
         if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
       }
       return { ...d, paiements };
@@ -1959,6 +1974,7 @@ function Avances({ data, setData, go }) {
     setAjoutOpen(false);
     setLocataireChoisi("");
     setNbMoisAjout(2);
+    setAjoutAuCycle(false);
   };
 
   const avances = data.locaux.filter((l) => l.statut === "loue").map((l) => {
@@ -2216,6 +2232,13 @@ function Avances({ data, setData, go }) {
                   <div className="flex justify-between"><span className="text-slate-500">Période couverte</span><span className="font-medium text-slate-900">{cap(moisNom(moisDepart))} {moisDepart.slice(0, 4)} → {cap(moisNom(moisFin))} {moisFin.slice(0, 4)}</span></div>
                   <div className="mt-1 flex justify-between border-t border-slate-200 pt-1"><span className="font-medium text-slate-700">Total à recevoir</span><span className="font-display font-semibold tabular-nums text-emerald-600">{money(montant * n)}</span></div>
                 </div>
+                <Field label="Ajouter cette avance au recouvrement en cours ?">
+                  <div className="flex gap-1.5">
+                    <button type="button" onClick={() => setAjoutAuCycle(true)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${ajoutAuCycle ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>Oui</button>
+                    <button type="button" onClick={() => setAjoutAuCycle(false)} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${!ajoutAuCycle ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>Non</button>
+                  </div>
+                  <p className="mt-1.5 text-xs text-slate-400">{ajoutAuCycle ? `Oui : les ${n} mois sont ajoutés au recouvrement du cycle en cours, versés au propriétaire dès ce mois-ci.` : "Non : le paiement reste enregistré en avance ; chaque mois comptera normalement à sa propre échéance, sans rien changer au recouvrement en cours."}</p>
+                </Field>
               </>
             );
           })()}
@@ -2548,9 +2571,15 @@ function Rappels({ data, setData, go }) {
 // entre la fenêtre de détail et l'assistant vocal, pour ne jamais diverger.
 function calcVersement(versement, data) {
   const modeOf = (id) => data.immeubles.find((i) => i.id === id)?.mode;
+  // Un paiement compte pour CE versement si : (a) c'est son mois naturel, comportement par
+  // défaut inchangé pour tous les paiements existants ; OU (b) il a été explicitement rattaché
+  // à CE cycle via verseAvec — une avance que le gestionnaire a choisi d'ajouter tout de suite
+  // au recouvrement en cours plutôt que d'attendre le mois naturel de chaque loyer couvert.
+  // Dans ce second cas, le paiement ne sera plus jamais recompté quand son propre mois viendra.
+  const appartientAuCycle = (x, moisNaturelAttendu) => x.verseAvec ? x.verseAvec === versement.mois : x.mois === moisNaturelAttendu;
   const items = [
-    ...data.paiements.filter((x) => modeOf(x.immeubleId) === "avance" && x.mois === versement.mois && x.statut === "paye"),
-    ...data.paiements.filter((x) => modeOf(x.immeubleId) === "echu" && x.mois === shiftMonth(versement.mois, -1) && x.statut === "paye"),
+    ...data.paiements.filter((x) => x.statut === "paye" && modeOf(x.immeubleId) === "avance" && appartientAuCycle(x, versement.mois)),
+    ...data.paiements.filter((x) => x.statut === "paye" && modeOf(x.immeubleId) === "echu" && appartientAuCycle(x, shiftMonth(versement.mois, -1))),
   ];
   const recouvre = items.reduce((s, x) => s + x.montant, 0);
   // La commission reste basée UNIQUEMENT sur le vrai loyer recouvré auprès des locataires — jamais
@@ -3642,11 +3671,12 @@ function buildContext(data) {
     versement_du_10: (data.versements || []).find((v) => v.mois === curMonth) || null,
     parties_versement: { gestionnaire: data.parametres?.gestionnaire, proprietaire: data.parametres?.proprietaire },
     immeubles: data.immeubles.map((i) => ({ nom: i.nom, mode: i.mode === "avance" ? "en avance" : "terme échu" })),
+    // Un seul tableau (locaux + locataires fusionnés, sans doublon) — réduit sensiblement la
+    // taille du contexte envoyé à chaque requête, donc le temps de traitement côté IA.
     locaux: data.locaux.map((l) => {
       const occ = data.locataires.find((t) => t.localId === l.id);
-      return { nom: l.nom, immeuble: imNom(l.immeubleId), bloc: l.bloc || null, type: l.type, statut: l.statut, loyer: l.loyer + l.charges, occupant: occ ? `${occ.prenom} ${occ.nom}` : null };
+      return { nom: l.nom, immeuble: imNom(l.immeubleId), statut: l.statut, loyer: l.loyer + l.charges, occupant: occ ? `${occ.prenom} ${occ.nom}` : null, telephone: occ?.telephone || null };
     }),
-    locataires: data.locataires.map((t) => ({ nom: `${t.prenom} ${t.nom}`, telephone: t.telephone || null, local: data.locaux.find((l) => l.id === t.localId)?.nom || null })),
     recouvrement: {
       [`${moisNom(moisEchu)}_echu`]: { encaisse: sum(ec.filter((p) => p.statut === "paye")), du: sum(ec) },
       [`${moisNom(moisAvance)}_avance`]: { encaisse: sum(av.filter((p) => p.statut === "paye")), du: sum(av) },
