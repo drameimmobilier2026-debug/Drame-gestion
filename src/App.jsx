@@ -337,7 +337,7 @@ function Modal({ open, onClose, title, children, wide }) {
   useBackClose(!!open, onClose);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[60] overflow-y-auto bg-slate-900/40 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] overflow-y-auto bg-slate-900/60" onClick={onClose}>
       <div className="flex min-h-full items-end justify-center sm:items-center sm:p-4">
         <div
           className={`w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl ring-1 ring-slate-900/5 sm:my-8 sm:rounded-3xl ${wide ? "sm:max-w-2xl" : "sm:max-w-md"}`}
@@ -530,7 +530,7 @@ function Dashboard({ data, go, isDark }) {
           {/* Deux recouvrements : Juin (échu) + Juillet (avance) */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button onClick={() => go("recouvrement")}
-              className="rounded-2xl bg-white/10 p-4 text-left ring-1 ring-white/15 backdrop-blur transition hover:bg-white/15">
+              className="rounded-2xl bg-white/15 p-4 text-left ring-1 ring-white/20 transition hover:bg-white/20">
               <div className="flex items-center justify-between">
                 <span className="rounded-lg bg-cyan-400/20 px-2 py-0.5 text-[11px] font-semibold text-cyan-50">Terme échu</span>
                 <ArrowDownRight size={15} className="text-teal-100/70" />
@@ -541,7 +541,7 @@ function Dashboard({ data, go, isDark }) {
               <div className="text-[11px] text-teal-100/70">/ {money(duEchu)}</div>
             </button>
             <button onClick={() => go("recouvrement")}
-              className="rounded-2xl bg-white/10 p-4 text-left ring-1 ring-white/15 backdrop-blur transition hover:bg-white/15">
+              className="rounded-2xl bg-white/15 p-4 text-left ring-1 ring-white/20 transition hover:bg-white/20">
               <div className="flex items-center justify-between">
                 <span className="rounded-lg bg-indigo-400/25 px-2 py-0.5 text-[11px] font-semibold text-indigo-50">En avance</span>
                 <ArrowUpRight size={15} className="text-teal-100/70" />
@@ -789,6 +789,14 @@ function PaymentsTable({ list, data, setData, go }) {
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
   const encaisser = (id) => setData((d) => ({ ...d, paiements: d.paiements.map((p) => p.id === id ? { ...p, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) } : p) }));
   const supprimer = (p) => {
+    if (p.statut === "paye") {
+      // Remettre en attente plutôt que supprimer : le local reste suivi pour ce cycle
+      // (montant total attendu, KPI du tableau de bord...) — seul le statut "payé" est annulé.
+      // Supprimer la ligne entière ferait disparaître le local de tout le suivi du cycle.
+      if (!confirm(`Remettre ce paiement de ${money(p.montant)} pour ${nom(p.locataireId)} (${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}) en attente ?`)) return;
+      setData((d) => ({ ...d, paiements: d.paiements.map((x) => x.id === p.id ? { ...x, statut: "en_attente", datePaiement: null } : x) }));
+      return;
+    }
     if (!confirm(`Supprimer ce paiement de ${money(p.montant)} pour ${nom(p.locataireId)} (${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}) ?\n\nCette action est irréversible.`)) return;
     setData((d) => ({ ...d, paiements: d.paiements.filter((x) => x.id !== p.id) }));
   };
@@ -834,7 +842,7 @@ function PaymentsTable({ list, data, setData, go }) {
                           ><MessageCircle size={14} /></a>
                           <button onClick={() => { const { bytes, fichier } = genererQuittancePdf(p, data); telechargerPdf(bytes, fichier); }} title="Télécharger la quittance en PDF" className="inline-flex items-center rounded-lg bg-teal-50 px-2 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100"><Download size={14} /></button>
                           <button onClick={() => setQuittance(p)} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200"><Receipt size={14} /> Voir</button>
-                          <button onClick={() => supprimer(p)} title="Supprimer ce paiement" className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+                          <button onClick={() => supprimer(p)} title="Remettre en attente" className="rounded-lg p-1.5 text-slate-400 hover:bg-amber-50 hover:text-amber-600"><RotateCcw size={15} /></button>
                         </div>
                       )}
                   </td>
@@ -1242,6 +1250,17 @@ function LocataireDetail({ id, data, setData, go }) {
     const pay = data.paiements.find((x) => x.localId === l.id && x.mois === mois);
     infoActuel = { local: l, mois, montant: l.loyer + l.charges, statut: pay ? pay.statut : "en_attente" };
   }
+  // Combien de mois consécutifs (à partir du cycle en cours) sont déjà payés d'avance —
+  // simple indicateur, la logique de versement mensuelle elle-même ne change pas.
+  let paieAvanceJusqua = null;
+  if (l && infoActuel) {
+    let cursor = infoActuel.mois;
+    while (data.paiements.some((x) => x.localId === l.id && x.mois === cursor && x.statut === "paye")) {
+      paieAvanceJusqua = cursor;
+      cursor = shiftMonth(cursor, 1);
+    }
+  }
+  const moisAvance_count = paieAvanceJusqua ? (() => { const [ya, ma] = infoActuel.mois.split("-").map(Number); const [yb, mb] = paieAvanceJusqua.split("-").map(Number); return (yb - ya) * 12 + (mb - ma) + 1; })() : 0;
 
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -1249,6 +1268,27 @@ function LocataireDetail({ id, data, setData, go }) {
   const docBlank = { categorie: "Bail", nom: "", date: new Date().toISOString().slice(0, 10) };
   const [docForm, setDocForm] = useState(docBlank);
   const [rappelModal, setRappelModal] = useState(null);
+  const [avanceOpen, setAvanceOpen] = useState(false);
+  const [nbMoisAvance, setNbMoisAvance] = useState(1);
+  // Enregistre plusieurs mois d'avance en une fois (ex: un locataire paie juillet + août +
+  // septembre le même jour) — crée ou met à jour chaque mois individuellement, payé aujourd'hui.
+  // Chaque mois garde ensuite son propre versement normal, sans rien changer à ce calcul.
+  const enregistrerAvance = () => {
+    if (!l || !infoActuel) return;
+    const n = Math.max(1, Math.min(24, +nbMoisAvance || 1));
+    setData((d) => {
+      let paiements = [...d.paiements];
+      for (let i = 0; i < n; i++) {
+        const mois = shiftMonth(infoActuel.mois, i);
+        const idx = paiements.findIndex((p) => p.localId === l.id && p.mois === mois);
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + l.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) };
+        if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
+      }
+      return { ...d, paiements };
+    });
+    setAvanceOpen(false);
+    setNbMoisAvance(1);
+  };
 
   const del = () => { delLocataire(setData, id); go("locataires"); };
   const saveDoc = () => {
@@ -1340,7 +1380,13 @@ function LocataireDetail({ id, data, setData, go }) {
       </div>
 
       <div className="rounded-2xl border border-slate-200/70 bg-white shadow-sm">
-        <h3 className="border-b border-slate-100 px-5 py-4 font-display text-base font-semibold text-slate-900">Paiements</h3>
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h3 className="font-display text-base font-semibold text-slate-900">Paiements</h3>
+            {moisAvance_count > 1 && <p className="mt-0.5 text-xs font-medium text-cyan-700">Payé d'avance jusqu'à {cap(moisNom(paieAvanceJusqua))} {paieAvanceJusqua.slice(0, 4)} ({moisAvance_count} mois)</p>}
+          </div>
+          {infoActuel && <button onClick={() => setAvanceOpen(true)} className="flex shrink-0 items-center gap-1 text-xs font-medium text-teal-700 hover:text-teal-800"><PlusCircle size={14} /> Paiement d'avance</button>}
+        </div>
         <PaymentsTable list={paie} data={data} setData={setData} go={go} />
       </div>
 
@@ -1410,6 +1456,20 @@ function LocataireDetail({ id, data, setData, go }) {
             <div className="mt-4 flex justify-end gap-2"><GhostBtn onClick={() => setRappelModal(null)}>Annuler</GhostBtn><PrimaryBtn onClick={confirmRappel}>Marquer comme envoyé</PrimaryBtn></div>
           </div>
         )}
+      </Modal>
+
+      <Modal open={avanceOpen} onClose={() => setAvanceOpen(false)} title="Paiement d'avance">
+        {infoActuel && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">Enregistre plusieurs mois d'un coup pour <span className="font-semibold text-slate-700">{t.prenom} {t.nom}</span>, à partir de <span className="font-semibold text-slate-700">{cap(moisNom(infoActuel.mois))} {infoActuel.mois.slice(0, 4)}</span> — chaque mois reste ensuite compté normalement dans son propre versement.</p>
+            <Field label="Nombre de mois payés d'avance"><input type="number" inputMode="numeric" min="1" max="24" className={inputCls} value={nbMoisAvance} onChange={(e) => setNbMoisAvance(e.target.value)} /></Field>
+            <div className="rounded-xl bg-slate-50 p-3 text-sm">
+              <div className="flex justify-between"><span className="text-slate-500">Montant par mois</span><span className="font-medium tabular-nums text-slate-900">{money(infoActuel.montant)}</span></div>
+              <div className="mt-1 flex justify-between border-t border-slate-200 pt-1"><span className="font-medium text-slate-700">Total à recevoir</span><span className="font-display font-semibold tabular-nums text-emerald-600">{money(infoActuel.montant * Math.max(1, Math.min(24, +nbMoisAvance || 1)))}</span></div>
+            </div>
+          </div>
+        )}
+        <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setAvanceOpen(false)}>Annuler</GhostBtn><PrimaryBtn onClick={enregistrerAvance}>Enregistrer</PrimaryBtn></div>
       </Modal>
     </div>
   );
@@ -1584,14 +1644,14 @@ function Recouvrement({ data, go, openPaie }) {
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <button onClick={() => openPaie({ mois: moisEchu, immeuble: imEchu?.id, statut: "tous" })} className="rounded-2xl bg-white/10 p-4 text-left ring-1 ring-white/15 backdrop-blur transition hover:bg-white/15">
+            <button onClick={() => openPaie({ mois: moisEchu, immeuble: imEchu?.id, statut: "tous" })} className="rounded-2xl bg-white/15 p-4 text-left ring-1 ring-white/20 transition hover:bg-white/20">
               <span className="rounded-lg bg-cyan-400/20 px-2 py-0.5 text-[11px] font-semibold text-cyan-50">Terme échu</span>
               <div className="mt-2 text-sm font-medium text-teal-50">{cap(moisNom(moisEchu))}</div>
               <div className="text-[11px] text-teal-100/70">{imEchu?.nom}</div>
               <div className="mt-2 font-display text-xl font-bold tabular-nums">{money(encE)}</div>
               <div className="text-[11px] text-teal-100/70">/ {money(duE)}</div>
             </button>
-            <button onClick={() => openPaie({ mois: moisAvance, immeuble: imAvance?.id, statut: "tous" })} className="rounded-2xl bg-white/10 p-4 text-left ring-1 ring-white/15 backdrop-blur transition hover:bg-white/15">
+            <button onClick={() => openPaie({ mois: moisAvance, immeuble: imAvance?.id, statut: "tous" })} className="rounded-2xl bg-white/15 p-4 text-left ring-1 ring-white/20 transition hover:bg-white/20">
               <span className="rounded-lg bg-indigo-400/25 px-2 py-0.5 text-[11px] font-semibold text-indigo-50">En avance</span>
               <div className="mt-2 text-sm font-medium text-teal-50">{cap(moisNom(moisAvance))}</div>
               <div className="text-[11px] text-teal-100/70">{imAvance?.nom}</div>
@@ -1673,6 +1733,11 @@ function Retards({ data, setData, go }) {
 
   const encaisser = (pid) => setData((d) => ({ ...d, paiements: d.paiements.map((p) => p.id === pid ? { ...p, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) } : p) }));
   const supprimer = (p) => {
+    if (p.statut === "paye") {
+      if (!confirm(`Remettre ce paiement de ${money(p.montant)} pour ${nom(p.locataireId)} (${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}) en attente ?`)) return;
+      setData((d) => ({ ...d, paiements: d.paiements.map((x) => x.id === p.id ? { ...x, statut: "en_attente", datePaiement: null } : x) }));
+      return;
+    }
     if (!confirm(`Supprimer ce paiement de ${money(p.montant)} pour ${nom(p.locataireId)} (${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}) ?\n\nCette action est irréversible.`)) return;
     setData((d) => ({ ...d, paiements: d.paiements.filter((x) => x.id !== p.id) }));
   };
