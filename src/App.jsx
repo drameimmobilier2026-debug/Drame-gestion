@@ -249,6 +249,38 @@ const moisAvance = curMonth;                 // ex. juillet — immeubles "en av
 const moisEchu = shiftMonth(curMonth, -1);   // ex. juin — immeubles "terme échu"
 const echeanceLabel = `5 ${moisNom(curMonth)}`;
 
+/* ===================== Règle centrale du cycle de recouvrement =====================
+   Un paiement compte dans le recouvrement du cycle EN COURS (tableau de bord, écran
+   Recouvrement, contexte de l'assistant) si et seulement si :
+
+   (a) c'est le loyer normalement dû ce cycle par son immeuble — mois courant pour un
+       immeuble "en avance", mois précédent pour un immeuble "terme échu" — ET il n'a pas
+       été rattaché explicitement à un AUTRE cycle ; OU
+   (b) c'est une avance que le gestionnaire a explicitement choisi d'imputer sur CE cycle
+       (réponse "Oui" à "Ajouter cette avance au recouvrement en cours ?"), quel que soit
+       le mois de loyer qu'elle couvre.
+
+   Autrement dit, avec "Non", une avance n'influence AUCUN chiffre du cycle en cours : elle
+   reste purement informative ("Payé à l'avance" sur les reçus) jusqu'à l'échéance de son
+   propre mois. Avec "Oui", elle s'ajoute immédiatement partout.
+
+   Source unique de vérité : tout écran affichant un montant de recouvrement DOIT passer par
+   cette fonction, jamais refaire le filtre à la main — c'est ce qui garantit que le tableau
+   de bord, le recouvrement et les versements racontent toujours la même histoire. */
+function compteDansCycleCourant(p, modeOf) {
+  const mode = modeOf(p.immeubleId);
+  const moisNaturel = mode === "avance" ? moisAvance : moisEchu;
+  // Rattachement explicite à un cycle (réponse "Oui") : seul ce cycle-là le compte, et il n'est
+  // jamais recompté à l'échéance naturelle de son propre mois.
+  if (p.verseAvec) return p.verseAvec === curMonth;
+  // Avance explicitement NON imputée (réponse "Non") : elle reste invisible pour les chiffres du
+  // cycle DE SA SAISIE (saisiPendantCycle), même si son mois correspond au mois courant. Une fois
+  // ce cycle passé (le temps avance), elle redevient un paiement tout à fait normal et compte à
+  // l'échéance de son propre mois — c'est bien "chaque mois comptera à sa propre échéance".
+  if (p.avanceNonImputee && p.saisiPendantCycle === curMonth) return false;
+  return p.mois === moisNaturel;
+}
+
 /* ============================ Seed ============================ */
 function seed() {
   const immeubles = [
@@ -454,8 +486,8 @@ function Dashboard({ data, go, isDark }) {
   const imEchu = immeubles.find((i) => i.mode === "echu");
 
   const sum = (arr) => arr.reduce((s, p) => s + p.montant, 0);
-  const avancePaie = paiements.filter((p) => modeOf(p.immeubleId) === "avance" && p.mois === moisAvance);
-  const echuPaie = paiements.filter((p) => modeOf(p.immeubleId) === "echu" && p.mois === moisEchu);
+  const avancePaie = paiements.filter((p) => modeOf(p.immeubleId) === "avance" && compteDansCycleCourant(p, modeOf));
+  const echuPaie = paiements.filter((p) => modeOf(p.immeubleId) === "echu" && compteDansCycleCourant(p, modeOf));
   const encAvance = sum(avancePaie.filter((p) => p.statut === "paye"));
   const encEchu = sum(echuPaie.filter((p) => p.statut === "paye"));
   const duAvance = sum(avancePaie), duEchu = sum(echuPaie);
@@ -1318,7 +1350,7 @@ function LocataireDetail({ id, data, setData, go }) {
       for (let i = 0; i < n; i++) {
         const mois = shiftMonth(infoActuel.mois, i);
         const idx = paiements.findIndex((p) => p.localId === l.id && p.mois === mois);
-        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + (l.charges || 0), statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycleLoc ? curMonth : null };
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + (l.charges || 0), statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycleLoc ? curMonth : null, avanceNonImputee: ajoutAuCycleLoc ? false : true, saisiPendantCycle: curMonth };
         if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
       }
       return { ...d, paiements };
@@ -1714,8 +1746,8 @@ function Recouvrement({ data, go, openPaie }) {
   const imAvance = immeubles.find((i) => i.mode === "avance");
   const imEchu = immeubles.find((i) => i.mode === "echu");
   const sum = (a) => a.reduce((s, p) => s + p.montant, 0);
-  const avancePaie = data.paiements.filter((p) => modeOf(p.immeubleId) === "avance" && p.mois === moisAvance);
-  const echuPaie = data.paiements.filter((p) => modeOf(p.immeubleId) === "echu" && p.mois === moisEchu);
+  const avancePaie = data.paiements.filter((p) => modeOf(p.immeubleId) === "avance" && compteDansCycleCourant(p, modeOf));
+  const echuPaie = data.paiements.filter((p) => modeOf(p.immeubleId) === "echu" && compteDansCycleCourant(p, modeOf));
   const encA = sum(avancePaie.filter((p) => p.statut === "paye")), encE = sum(echuPaie.filter((p) => p.statut === "paye"));
   const duA = sum(avancePaie), duE = sum(echuPaie);
   const total = encA + encE, attendu = duA + duE, impaye = attendu - total;
@@ -1962,11 +1994,26 @@ function Avances({ data, setData, go }) {
       for (let i = 0; i < n; i++) {
         const mois = shiftMonth(moisDepart, i);
         const idx = paiements.findIndex((p) => p.localId === local.id && p.mois === mois);
-        // verseAvec (toujours curMonth, quel que soit le mode avance/échu — c'est l'étiquette du
-        // cycle de versement actif, pas le mois de loyer) : si "Oui", TOUS les mois de cette
-        // avance sont rattachés au versement en cours, et ne seront plus jamais recomptés à leur
-        // propre échéance naturelle. Si "Non", chaque mois garde son cycle naturel (inchangé).
-        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois, montant: local.loyer + (local.charges || 0), statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycle ? curMonth : null };
+        // Deux réponses possibles à "Ajouter cette avance au recouvrement en cours ?" :
+        //
+        // OUI  -> verseAvec = curMonth : TOUS les mois de l'avance sont imputés au cycle en cours.
+        //         Ils comptent immédiatement partout (tableau de bord, recouvrement, versement) et
+        //         ne seront JAMAIS recomptés à l'échéance de leur propre mois.
+        //
+        // NON  -> avanceNonImputee = true : l'avance est enregistrée et payée, mais reste
+        //         totalement INVISIBLE pour les chiffres du cycle en cours — y compris son
+        //         premier mois, même s'il correspond au mois courant. Elle n'apparaît sur les
+        //         reçus qu'à titre informatif ("Payé à l'avance"), et chaque mois ne comptera
+        //         qu'à l'échéance de son propre cycle, le moment venu.
+        const rec = {
+          id: idx >= 0 ? paiements[idx].id : uid(),
+          localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois,
+          montant: local.loyer + (local.charges || 0),
+          statut: "paye", datePaiement: new Date().toISOString().slice(0, 10),
+          verseAvec: ajoutAuCycle ? curMonth : null,
+          avanceNonImputee: ajoutAuCycle ? false : true,
+          saisiPendantCycle: curMonth, // cycle où l'avance a été saisie — voir compteDansCycleCourant
+        };
         if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
       }
       return { ...d, paiements };
@@ -2599,7 +2646,16 @@ function calcVersement(versement, data) {
   // à CE cycle via verseAvec — une avance que le gestionnaire a choisi d'ajouter tout de suite
   // au recouvrement en cours plutôt que d'attendre le mois naturel de chaque loyer couvert.
   // Dans ce second cas, le paiement ne sera plus jamais recompté quand son propre mois viendra.
-  const appartientAuCycle = (x, moisNaturelAttendu) => x.verseAvec ? x.verseAvec === versement.mois : x.mois === moisNaturelAttendu;
+  // Même règle que compteDansCycleCourant, mais paramétrée par le mois du versement (qui peut
+  // être un cycle passé), au lieu du cycle courant :
+  //  - "Oui" (verseAvec) : compte uniquement dans le cycle auquel il a été explicitement rattaché ;
+  //  - "Non" (avanceNonImputee) : invisible pour le cycle de sa saisie, normal ensuite ;
+  //  - sinon : compte au cycle de son mois naturel.
+  const appartientAuCycle = (x, moisNaturelAttendu) => {
+    if (x.verseAvec) return x.verseAvec === versement.mois;
+    if (x.avanceNonImputee && x.saisiPendantCycle === versement.mois) return false;
+    return x.mois === moisNaturelAttendu;
+  };
   const items = [
     ...data.paiements.filter((x) => x.statut === "paye" && modeOf(x.immeubleId) === "avance" && appartientAuCycle(x, versement.mois)),
     ...data.paiements.filter((x) => x.statut === "paye" && modeOf(x.immeubleId) === "echu" && appartientAuCycle(x, shiftMonth(versement.mois, -1))),
@@ -3679,14 +3735,172 @@ function Parametres({ data, setData, resetDemo, theme, setTheme }) {
   );
 }
 
+/* ==================== Moteur d'intentions local (hors ligne) ====================
+   Reconnaît les commandes courantes SANS aucun appel réseau : réponse instantanée, aucun
+   risque de délai dépassé, aucune dérive conversationnelle. L'IA distante n'est sollicitée
+   qu'en dernier recours, pour les questions ouvertes qu'aucune règle ne couvre.
+
+   C'est ce qui distingue un assistant fiable d'un assistant "qui discute" : les ordres
+   directs sont exécutés localement, de façon déterministe et reproductible. */
+
+// Enlève accents, casse et ponctuation — pour comparer des mots sans se soucier de la façon
+// dont la reconnaissance vocale les a orthographiés.
+const normaliserTexte = (s) => (s || "")
+  .toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/[’'`]/g, " ")
+  .replace(/[.,;:!?]/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+// La reconnaissance vocale française colle rarement les codes de locaux : "A22" ressort en
+// "a 22", "à 22", "a vingt deux"... On recolle tout ça avant d'essayer de reconnaître un local.
+const NOMBRES_MOTS = { un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, six: 6, sept: 7, huit: 8, neuf: 9, dix: 10, onze: 11, douze: 12, treize: 13, quatorze: 14, quinze: 15, seize: 16, vingt: 20, trente: 30 };
+function corrigerTranscription(texte) {
+  let t = normaliserTexte(texte);
+  // "vingt deux" -> "22", "trente et un" -> "31" (formes simples suffisantes ici)
+  t = t.replace(/\b(vingt|trente)\s+(et\s+)?(un|une|deux|trois|quatre|cinq|six|sept|huit|neuf)\b/g,
+    (_, dizaine, __, unite) => String(NOMBRES_MOTS[dizaine] + NOMBRES_MOTS[unite]));
+  t = t.replace(/\b(vingt|trente)\b/g, (m) => String(NOMBRES_MOTS[m]));
+  Object.keys(NOMBRES_MOTS).forEach((mot) => {
+    t = t.replace(new RegExp(`\\b${mot}\\b`, "g"), String(NOMBRES_MOTS[mot]));
+  });
+  // "a 22" / "à 22" / "a-22" -> "a22" (lettre isolée suivie d'un nombre = code de local)
+  t = t.replace(/\b([abcdr])\s*[-]?\s*(\d{1,3})\b/g, "$1$2");
+  return t.replace(/\s+/g, " ").trim();
+}
+
+// Retrouve un local par son code, même approximativement transcrit ("a22", "a 22", "22").
+function trouverLocalDansTexte(texte, locaux) {
+  const t = corrigerTranscription(texte);
+  // 1) correspondance exacte du nom de local (le plus fiable)
+  for (const l of locaux) {
+    const code = normaliserTexte(l.nom).replace(/\s+/g, "");
+    if (code && new RegExp(`\\b${code}\\b`).test(t.replace(/\s+/g, " "))) return l;
+    if (code && t.replace(/\s+/g, "").includes(code)) return l;
+  }
+  return null;
+}
+
+// Retrouve un locataire par son nom, à partir d'un ou plusieurs mots prononcés.
+function trouverLocataireDansTexte(texte, locataires) {
+  const t = corrigerTranscription(texte);
+  let meilleur = null, meilleurScore = 0;
+  for (const loc of locataires) {
+    const nomComplet = normaliserTexte(`${loc.prenom} ${loc.nom}`);
+    const mots = nomComplet.split(" ").filter((m) => m.length >= 3); // ignore "de", "la"...
+    if (!mots.length) continue;
+    const trouves = mots.filter((m) => t.includes(m)).length;
+    if (trouves > meilleurScore) { meilleurScore = trouves; meilleur = loc; }
+  }
+  return meilleurScore > 0 ? meilleur : null;
+}
+
+// Les 17 modules, avec toutes les façons naturelles de les nommer à l'oral.
+const SYNONYMES_VUES = {
+  dashboard: ["tableau de bord", "tableau", "accueil", "dashboard", "resume", "vue d ensemble"],
+  immeubles: ["immeuble", "immeubles", "batiment", "batiments"],
+  locaux: ["local", "locaux", "logement", "logements", "appartement", "appartements"],
+  locataires: ["locataire", "locataires", "occupant", "occupants"],
+  paiements: ["paiement", "paiements", "loyer", "loyers", "encaissement", "encaissements"],
+  recouvrement: ["recouvrement", "recouvrements", "collecte", "encaisse"],
+  retards: ["retard", "retards", "impaye", "impayes", "en retard", "non paye", "non payes", "retardataire", "retardataires"],
+  arrieres: ["arriere", "arrieres", "arriere de loyer", "dette", "dettes"],
+  avances: ["avance", "avances", "paiement anticipe", "anticipe"],
+  rappels: ["rappel", "rappels", "relance", "relances"],
+  versements: ["versement", "versements", "proprietaire"],
+  commissions: ["commission", "commissions", "ma commission", "mes commissions", "honoraire", "honoraires"],
+  recus: ["recu", "recus", "quittance", "quittances"],
+  depenses: ["depense", "depenses", "charge", "charges", "frais"],
+  documents: ["document", "documents", "fichier", "fichiers", "contrat", "contrats", "bail", "baux"],
+  rapports: ["rapport", "rapports", "statistique", "statistiques", "bilan", "analyse"],
+  parametres: ["parametre", "parametres", "reglage", "reglages", "configuration", "option", "options"],
+};
+
+// Verbes déclenchant une action, par famille — toutes les variantes naturelles à l'oral.
+const VERBES = {
+  enregistrer: ["enregistre", "enregistrer", "enregistrement", "valide", "valider", "ajoute", "ajouter", "marque", "marquer", "encaisse", "encaisser", "saisis", "saisir", "note", "noter", "inscris", "inscrire", "paye", "payer", "regle", "regler", "recois", "recu de"],
+  afficher: ["affiche", "afficher", "montre", "montrer", "ouvre", "ouvrir", "va", "aller", "vas", "voir", "consulte", "consulter", "liste", "lister", "amene", "amener", "passe", "passer", "accede", "acceder"],
+  quittance: ["quittance", "recu", "recus", "quittances", "renvoie", "renvoyer", "reenvoie"],
+  versement: ["versement", "verse", "verser"],
+};
+
+const contientUnDe = (texte, mots) => mots.some((m) => new RegExp(`\\b${m.replace(/ /g, "\\s+")}\\b`).test(texte));
+
+/* Analyse une commande et renvoie une intention exécutable, ou null si aucune règle ne
+   s'applique (auquel cas on interrogera l'IA distante).
+   Renvoie { action, params, reponse } — exactement la même forme que la réponse de l'IA,
+   ce qui permet de réutiliser tel quel le moteur d'exécution existant. */
+function analyserIntention(texteBrut, data) {
+  const t = corrigerTranscription(texteBrut);
+  if (!t) return null;
+
+  const locaux = data.locaux || [];
+  const locataires = data.locataires || [];
+  const local = trouverLocalDansTexte(t, locaux);
+  const locataire = trouverLocataireDansTexte(t, locataires);
+  const cible = local ? local.nom : locataire ? `${locataire.prenom} ${locataire.nom}` : null;
+  const nomCible = local
+    ? (locataires.find((x) => x.localId === local.id) ? `${locataires.find((x) => x.localId === local.id).prenom} ${locataires.find((x) => x.localId === local.id).nom}` : local.nom)
+    : cible;
+
+  // --- Quittance / reçu à renvoyer (avant "enregistrer", car "recu" est ambigu) ---
+  if (cible && contientUnDe(t, ["renvoie", "renvoyer", "reenvoie", "renvoi"]) && contientUnDe(t, VERBES.quittance)) {
+    return { action: "envoyer_quittance", params: { locataire: cible }, reponse: `Je renvoie la quittance de ${nomCible}.` };
+  }
+
+  // --- Enregistrer un paiement : "enregistre le paiement de A22", "paiement A22", "valide A22"… ---
+  const parleDePaiement = contientUnDe(t, ["paiement", "paiements", "loyer", "loyers", "paye", "payer", "regle", "regler", "encaisse", "encaisser"]);
+  if (cible && (contientUnDe(t, VERBES.enregistrer) || parleDePaiement)) {
+    // On exclut les cas où la personne veut clairement juste CONSULTER, pas enregistrer.
+    const veutJusteVoir = contientUnDe(t, ["affiche", "montre", "voir", "consulte", "liste"]) && !contientUnDe(t, VERBES.enregistrer);
+    if (!veutJusteVoir) {
+      const montantDit = t.match(/\b(\d{4,})\b/); // un montant explicite (au moins 4 chiffres)
+      const params = { locataire: cible };
+      if (montantDit) params.montant = montantDit[1];
+      return { action: "enregistrer_paiement", params, reponse: `Paiement enregistré pour ${nomCible}, quittance générée.` };
+    }
+  }
+
+  // --- Créer le versement ---
+  if (contientUnDe(t, VERBES.versement) && (contientUnDe(t, ["cree", "creer", "genere", "generer", "fais", "faire", "nouveau", "nouvelle"]) || contientUnDe(t, VERBES.enregistrer))) {
+    return { action: "creer_versement", params: {}, reponse: "Versement créé, reçu généré." };
+  }
+
+  // --- Filtres directs sur les loyers ---
+  if (contientUnDe(t, ["impaye", "impayes", "non paye", "non payes", "en retard", "retardataire", "retardataires"])) {
+    return { action: "filtrer_loyers", params: { statut: "impayes" }, reponse: "Voici les loyers impayés." };
+  }
+  if (contientUnDe(t, ["deja paye", "deja payes", "loyers payes", "paiements payes"])) {
+    return { action: "filtrer_loyers", params: { statut: "paye" }, reponse: "Voici les loyers déjà payés." };
+  }
+
+  // --- Navigation vers l'un des 17 modules ---
+  // On teste les libellés les plus longs d'abord, pour que "tableau de bord" l'emporte sur "tableau".
+  const entrees = Object.entries(SYNONYMES_VUES)
+    .flatMap(([vue, syns]) => syns.map((s) => ({ vue, syn: s })))
+    .sort((a, b) => b.syn.length - a.syn.length);
+  for (const { vue, syn } of entrees) {
+    if (new RegExp(`\\b${syn.replace(/ /g, "\\s+")}\\b`).test(t)) {
+      // Un simple mot-clé suffit ("versements"), mais on évite de naviguer si la phrase est
+      // manifestement une question ("combien de locataires ?") — dans ce cas, l'IA répondra.
+      const estQuestion = /\b(combien|quel|quelle|quels|quelles|qui|pourquoi|comment|est ce que)\b/.test(t);
+      if (estQuestion) return null;
+      return { action: "naviguer", params: { vue }, reponse: `J'ouvre ${syn}.` };
+    }
+  }
+
+  return null; // aucune règle locale : on passera par l'IA distante
+}
+
 /* ============================ Assistant vocal ============================ */
 function buildContext(data) {
   const modeOf = (id) => data.immeubles.find((i) => i.id === id)?.mode;
   const imNom = (id) => data.immeubles.find((i) => i.id === id)?.nom || "?";
   const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "?"; };
   const sum = (a) => a.reduce((s, p) => s + p.montant, 0);
-  const av = data.paiements.filter((p) => modeOf(p.immeubleId) === "avance" && p.mois === moisAvance);
-  const ec = data.paiements.filter((p) => modeOf(p.immeubleId) === "echu" && p.mois === moisEchu);
+  const av = data.paiements.filter((p) => modeOf(p.immeubleId) === "avance" && compteDansCycleCourant(p, modeOf));
+  const ec = data.paiements.filter((p) => modeOf(p.immeubleId) === "echu" && compteDansCycleCourant(p, modeOf));
   return {
     echeance: echeanceLabel, devise: "GNF",
     depenses_mois: (data.depenses || []).filter((d) => d.date.slice(0, 7) === curMonth).reduce((s, d) => s + d.montant, 0),
@@ -3829,7 +4043,31 @@ function VoiceAssistant({ data, setData, go, openPaie }) {
   const ask = async (userText) => {
     const clean = userText.trim(); if (!clean) return;
     console.log("[Assistant] 1/5 Transcription reçue:", JSON.stringify(clean));
-    setLog((l) => [...l, { role: "user", text: clean }]); setText(""); setThinking(true);
+    setLog((l) => [...l, { role: "user", text: clean }]); setText("");
+
+    // ── ÉTAPE LOCALE (aucun réseau) ────────────────────────────────────────────────
+    // La très grande majorité des commandes d'usage courant ("enregistre le paiement de A22",
+    // "affiche les impayés", "ouvre les versements"...) sont reconnues ici, instantanément et
+    // de façon déterministe. Aucun appel réseau, donc AUCUN délai dépassé possible, aucune
+    // dérive conversationnelle : l'ordre est exécuté, point. L'IA distante n'est sollicitée
+    // que pour les questions ouvertes qu'aucune règle ne couvre.
+    const intentionLocale = analyserIntention(clean, data);
+    if (intentionLocale) {
+      console.log("[Assistant] ⚡ Reconnu localement (sans réseau):", intentionLocale.action, intentionLocale.params);
+      let rep = intentionLocale.reponse;
+      let extra = null;
+      try { extra = execute(intentionLocale.action, intentionLocale.params || {}); }
+      catch (e) {
+        console.error("[Assistant] ❌ Échec de l'exécution locale:", e);
+        rep = e.message || "Cette action n'a pas pu être effectuée.";
+      }
+      setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]); speak(rep);
+      return; // terminé — aucun appel réseau
+    }
+
+    // ── ÉTAPE DISTANTE (IA) : uniquement pour ce que le moteur local ne couvre pas ──
+    console.log("[Assistant] Aucune règle locale — passage à l'IA distante.");
+    setThinking(true);
     const ctx = buildContext(data);
     const system = `Tu es l'assistant vocal de "DRAMÉ Gestion", une application de gestion locative en Guinée (monnaie : franc guinéen GNF).
 RÈGLE ABSOLUE : ta réponse complète doit être UN SEUL objet JSON valide, rien d'autre. Pas de "Voici le JSON", pas d'explication avant ou après, pas de balises markdown, pas de texte en dehors des accolades. Le tout premier caractère de ta réponse doit être { et le dernier doit être }.
@@ -3848,8 +4086,19 @@ Si la demande ne correspond à aucune de ces actions, utilise "aucune" et expliq
 RAPPEL : réponds SEULEMENT par l'objet JSON, rien avant, rien après.
 Données actuelles : ${JSON.stringify(ctx)}`;
     try {
-      console.log("[Assistant] 2/5 Envoi à l'IA (Gemini via fonction Netlify)…");
-      const res = await fetch("/.netlify/functions/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system, message: clean }) });
+      // Deux tentatives : un premier appel après une longue inactivité paie le "démarrage à
+      // froid" de la fonction serverless (1 à 3 s perdues avant même de commencer). Le second
+      // essai, lui, tombe sur une fonction déjà chaude et aboutit presque toujours.
+      const appeler = () => fetch("/.netlify/functions/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system, message: clean }) });
+      let res;
+      try {
+        console.log("[Assistant] 2/5 Envoi à l'IA (tentative 1)…");
+        res = await appeler();
+        if (res.status === 504 || res.status === 502) throw new Error("premier essai trop lent");
+      } catch (e1) {
+        console.warn("[Assistant] Tentative 1 échouée (" + (e1.message || e1) + ") — nouvelle tentative…");
+        res = await appeler(); // 2e essai : la fonction est maintenant chaude
+      }
       const d = await res.json().catch(() => null);
       if (!res.ok) {
         // Faire remonter le vrai message (de notre fonction, ou de l'API Gemini elle-même si
@@ -3897,8 +4146,11 @@ Données actuelles : ${JSON.stringify(ctx)}`;
       }
       setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]); speak(rep);
     } catch (e) {
+      // Le détail technique va dans les logs (pour le débogage), JAMAIS à l'écran : l'utilisateur
+      // reçoit un message clair et actionnable, et surtout un rappel que les commandes directes
+      // (elles, traitées localement) fonctionnent même quand l'IA distante est indisponible.
       console.error("[Assistant] ❌ Erreur de bout en bout:", e);
-      const m = `Connexion à l'assistant impossible : ${e.message || "erreur inconnue"}`;
+      const m = "Je n'arrive pas à joindre l'assistant pour cette question. Les commandes directes (« enregistre le paiement de A22 », « affiche les impayés », « ouvre les versements »…) fonctionnent normalement.";
       setLog((l) => [...l, { role: "ai", text: m }]); speak(m);
     }
     finally { setThinking(false); }
