@@ -13,24 +13,37 @@ import {
 
 /* ============================ Helpers ============================ */
 const STORAGE_KEY = "drame-gestion-data-v10";
-// Gestion du bouton "retour" matériel (Android) et du geste retour :
-// quand une couche fermable s'ouvre (modale, tiroir…), on empile une entrée
-// d'historique ; le retour déclenche 'popstate' et on ferme la couche au lieu
-// de quitter l'application. Chaque couche a une clé unique pour éviter les conflits.
+
+/* ============ Navigation & bouton Retour (Android / geste iOS / PWA) ============
+   Modèle "sentinelle", robuste sur tous les supports :
+
+   • L'application garde EN PERMANENCE une entrée d'historique d'avance ("sentinelle").
+     Un retour la consomme ; on décide alors nous-mêmes quoi faire, puis on la ré-arme.
+     Le navigateur ne peut donc jamais quitter l'app sans notre accord — plus de sortie
+     accidentelle, plus de page blanche.
+
+   • Priorité stricte à chaque retour :
+       1. une couche fermable est ouverte (modale, tiroir, panneau…) → on ferme la plus
+          récente, et RIEN d'autre ;
+       2. sinon, on est dans une sous-page (détail, sous-module…) → on remonte d'un cran ;
+       3. sinon (accueil) → premier appui : message « Appuyez encore pour quitter » ;
+          second appui dans les 2 secondes → sortie effective.
+
+   Les couches ne touchent JAMAIS à l'historique elles-mêmes : elles se contentent de
+   s'inscrire dans ce registre. C'est ce qui évite les conflits (l'ancien système fermait
+   la modale ET reculait d'une page en même temps) et les boucles de navigation. */
+const couchesOuvertes = []; // pile LIFO des couches fermables actuellement affichées
+
 function useBackClose(isOpen, onClose) {
-  const pushedRef = useRef(false);
+  const fermerRef = useRef(onClose);
+  fermerRef.current = onClose; // toujours la version la plus récente, sans réinscrire la couche
   useEffect(() => {
     if (!isOpen) return;
-    const key = "layer-" + Math.random().toString(36).slice(2);
-    window.history.pushState({ layer: key }, "");
-    pushedRef.current = true;
-    const onPop = () => { pushedRef.current = false; onClose(); };
-    window.addEventListener("popstate", onPop);
+    const entree = { fermer: () => fermerRef.current && fermerRef.current() };
+    couchesOuvertes.push(entree);
     return () => {
-      window.removeEventListener("popstate", onPop);
-      // Fermeture "manuelle" (croix, clic dehors) : on retire l'entrée ajoutée
-      // pour rester synchronisé avec l'historique du navigateur.
-      if (pushedRef.current) { pushedRef.current = false; window.history.back(); }
+      const i = couchesOuvertes.indexOf(entree);
+      if (i >= 0) couchesOuvertes.splice(i, 1); // fermeture manuelle (croix, clic dehors) : on se désinscrit, sans toucher à l'historique
     };
   }, [isOpen]);
 }
@@ -1267,7 +1280,12 @@ function Locataires({ data, setData, go }) {
   // calculé dynamiquement pour rester correct même après un ajout/modif via l'app.
   // Les locataires sans local sont renvoyés à la fin.
   const rangLocal = (t) => { const l = data.locaux.find((x) => x.id === t.localId); return l ? l.nom.toLowerCase() : "zzz"; };
-  const liste = [...data.locataires].sort((a, b) => rangLocal(a).localeCompare(rangLocal(b), "fr", { numeric: true }));
+  // Mémorisé : le tri (avec localeCompare, coûteux) ne se recalcule que si les locataires ou
+  // les locaux changent réellement — plus à chaque frappe dans une modale ouverte, par exemple.
+  const liste = useMemo(
+    () => [...data.locataires].sort((a, b) => rangLocal(a).localeCompare(rangLocal(b), "fr", { numeric: true })),
+    [data.locataires, data.locaux]
+  );
 
   return (
     <div>
@@ -3349,7 +3367,7 @@ function MesCommissions({ data, setData, go, isDark }) {
 
 
 /* ============================ Rapports ============================ */
-function Rapports({ data, isDark }) {
+function Rapports({ data, isDark, go }) {
   const gridColor = isDark ? "#334155" : "#f1f5f9";
   const tickColor = "#94a3b8";
   const tooltipStyle = { borderRadius: 12, border: `1px solid ${isDark ? "#334155" : "#e2e8f0"}`, fontSize: 12, background: isDark ? "#1e293b" : "#fff", color: isDark ? "#f1f5f9" : "#0f172a" };
@@ -3368,27 +3386,46 @@ function Rapports({ data, isDark }) {
   const net = totalEnc - totalDep;
   const taux = totalDu ? Math.round((totalEnc / totalDu) * 100) : 0;
 
+  // Indicateurs exigés qui manquaient : arriérés, commissions, occupation. Tous calculés à
+  // partir des mêmes données que leurs modules respectifs — jamais une valeur figée ou
+  // dupliquée, donc toujours cohérents avec ce qu'affichent Arriérés et Mes commissions.
+  const totalArrieres = data.paiements.filter((p) => {
+    if (p.statut === "paye") return false;
+    const dernier = modeOf(p.immeubleId) === "avance" ? moisAvance : moisEchu;
+    return p.mois <= dernier;
+  }).reduce((s, p) => s + p.montant, 0);
+  const totalCommissions = (data.versements || []).reduce((s, v) => s + calcVersement(v, data).commission, 0);
+  const locauxTotal = data.locaux.length;
+  const locauxOccupes = data.locaux.filter((l) => l.statut === "loue").length;
+  const tauxOccupation = locauxTotal ? Math.round((locauxOccupes / locauxTotal) * 100) : 0;
+
   const debut = shiftMonth(curMonth, -5);
   const parCat = {};
   (data.depenses || []).filter((d) => d.date.slice(0, 7) >= debut).forEach((d) => { parCat[d.categorie] = (parCat[d.categorie] || 0) + d.montant; });
   const cats = Object.entries(parCat).sort((a, b) => b[1] - a[1]);
   const maxCat = cats.length ? cats[0][1] : 1;
 
+  // Chaque indicateur renvoie vers le module qui en détient le détail : Rapports n'est plus
+  // un cul-de-sac, c'est un vrai point d'entrée vers le reste de l'application.
   const cards = [
-    { label: "Revenus (6 mois)", value: moneyC(totalEnc), tint: "text-teal-700" },
-    { label: "Dépenses (6 mois)", value: moneyC(totalDep), tint: "text-rose-600" },
-    { label: "Résultat net", value: moneyC(net), tint: net >= 0 ? "text-emerald-600" : "text-rose-600" },
-    { label: "Taux de recouvrement", value: `${taux}%`, tint: "text-slate-900" },
+    { label: "Revenus (6 mois)", value: moneyC(totalEnc), tint: "text-teal-700", vue: "recouvrement" },
+    { label: "Dépenses (6 mois)", value: moneyC(totalDep), tint: "text-rose-600", vue: "depenses" },
+    { label: "Résultat net", value: moneyC(net), tint: net >= 0 ? "text-emerald-600" : "text-rose-600", vue: "recouvrement" },
+    { label: "Taux de recouvrement", value: `${taux}%`, tint: "text-slate-900", vue: "recouvrement" },
+    { label: "Arriérés", value: moneyC(totalArrieres), tint: totalArrieres > 0 ? "text-pink-600" : "text-emerald-600", vue: "arrieres" },
+    { label: "Mes commissions", value: moneyC(totalCommissions), tint: "text-teal-700", vue: "commissions" },
+    { label: "Taux d'occupation", value: `${tauxOccupation}%`, tint: "text-slate-900", vue: "locaux", sub: `${locauxOccupes}/${locauxTotal} locaux` },
   ];
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {cards.map((c) => (
-          <div key={c.label} className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+          <button key={c.label} onClick={() => go && go(c.vue)} className="rounded-2xl border border-slate-200/70 bg-white p-5 text-left shadow-sm transition hover:bg-slate-50">
             <div className="text-xs font-medium text-slate-500">{c.label}</div>
             <div className={`mt-2 font-display text-xl font-semibold tabular-nums lg:text-2xl ${c.tint}`}>{c.value}</div>
-          </div>
+            <div className="mt-0.5 text-[11px] text-slate-400">{c.sub || "voir le détail →"}</div>
+          </button>
         ))}
       </div>
 
@@ -3657,7 +3694,7 @@ function Documents({ data, setData, go }) {
 }
 
 /* ============================ Paramètres ============================ */
-function Parametres({ data, setData, resetDemo, theme, setTheme }) {
+function Parametres({ data, setData, resetDemo, theme, setTheme, go }) {
   const p = data.parametres || {};
   const [form, setForm] = useState({ societe: p.societe || "", gerant: p.gerant || "", email: p.email || "", telephone: p.telephone || "", gestionnaire: p.gestionnaire || "", proprietaire: p.proprietaire || "", proprietaireTelephone: p.proprietaireTelephone || "", commissionPct: p.commissionPct ?? 0 });
   const [saved, setSaved] = useState(false);
@@ -3691,7 +3728,10 @@ function Parametres({ data, setData, resetDemo, theme, setTheme }) {
           <Field label="Gestionnaire"><input className={inputCls} value={form.gestionnaire} onChange={(e) => setForm({ ...form, gestionnaire: e.target.value })} /></Field>
           <Field label="Propriétaire"><input className={inputCls} value={form.proprietaire} onChange={(e) => setForm({ ...form, proprietaire: e.target.value })} /></Field>
           <Field label="Téléphone du propriétaire"><input className={inputCls} value={form.proprietaireTelephone} onChange={(e) => setForm({ ...form, proprietaireTelephone: e.target.value })} placeholder="+224 ..." /></Field>
-          <Field label="Commission gestionnaire (%)"><input type="number" inputMode="numeric" min="0" max="100" className={inputCls} value={form.commissionPct || ""} placeholder="0" onChange={(e) => setForm({ ...form, commissionPct: Math.max(0, Math.min(100, +e.target.value)) })} /></Field>
+          <Field label="Commission gestionnaire (%)">
+            <input type="number" inputMode="numeric" min="0" max="100" className={inputCls} value={form.commissionPct || ""} placeholder="0" onChange={(e) => setForm({ ...form, commissionPct: Math.max(0, Math.min(100, +e.target.value)) })} />
+            {go && <button onClick={() => go("commissions")} className="mt-1.5 text-xs font-medium text-teal-700 hover:underline">Voir l'effet dans Mes commissions →</button>}
+          </Field>
         </div>
         <div className="mt-4 flex items-center gap-3"><PrimaryBtn onClick={save}>Enregistrer</PrimaryBtn>{saved && <span className="flex items-center gap-1 text-sm text-emerald-600"><Check size={15} /> Enregistré</span>}</div>
       </div>
@@ -4376,12 +4416,42 @@ function Drawer({ open, onClose, children }) {
   );
 }
 
+/* Barrière d'erreur : si un écran plante (donnée inattendue, bug de rendu…), on n'affiche
+   JAMAIS une page blanche. On montre un repli clair, avec un bouton pour revenir au tableau
+   de bord — les données restent intactes, seul l'affichage de l'écran fautif est remplacé. */
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { erreur: null }; }
+  static getDerivedStateFromError(erreur) { return { erreur }; }
+  componentDidCatch(erreur, info) { console.error("[Écran] Erreur de rendu :", erreur, info); }
+  componentDidUpdate(prevProps) {
+    // Changer d'écran réinitialise l'erreur — on ne reste pas bloqué sur le repli.
+    if (prevProps.vue !== this.props.vue && this.state.erreur) this.setState({ erreur: null });
+  }
+  render() {
+    if (!this.state.erreur) return this.props.children;
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center">
+        <p className="font-display text-base font-semibold text-amber-800">Cet écran n'a pas pu s'afficher</p>
+        <p className="mx-auto mt-1.5 max-w-md text-sm text-amber-700">Vos données sont intactes. Revenez au tableau de bord et réessayez ; si le problème persiste, signalez-le.</p>
+        <button onClick={() => this.props.onRetour && this.props.onRetour()} className="mt-4 rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800">Revenir au tableau de bord</button>
+      </div>
+    );
+  }
+}
+
 export default function App() {
   // Session Supabase : undefined = en cours de vérification, null = déconnecté, objet = connecté.
   const [session, setSession] = useState(undefined);
   // Pile de navigation : le bouton retour matériel dépile une vue au lieu de quitter l'app.
   const [stack, setStack] = useState([{ view: "dashboard", id: null }]);
   const nav = stack[stack.length - 1];
+
+  // Le document défile désormais naturellement (voir la structure du rendu plus bas) : on
+  // remonte en haut à chaque changement de vue, sinon on arriverait au milieu de la page
+  // suivante en gardant la position de défilement précédente.
+  useEffect(() => {
+    try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); }
+  }, [nav.view, nav.id]);
   const [data, setData] = useState(null); // null tant que les données ne sont pas chargées depuis Supabase
   const [loaded, setLoaded] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -4421,14 +4491,47 @@ export default function App() {
     return () => clearTimeout(t);
   }, [data, loaded, session]);
 
-  // Le bouton retour du téléphone (popstate) dépile la vue courante.
+  // ── Bouton Retour (Android) / geste Retour (iOS) / Retour navigateur & PWA ──
+  // Voir le commentaire du modèle "sentinelle" en haut du fichier. Un seul gestionnaire
+  // pour toute l'application : aucune couche ne manipule l'historique de son côté, donc
+  // aucun conflit possible (plus de "ferme la modale ET recule d'une page").
+  const stackRef = useRef(stack);
+  stackRef.current = stack; // toujours la pile à jour, lisible depuis le gestionnaire
+  const dernierRetourRef = useRef(null); // horodatage du 1er appui Retour à l'accueil ; null = aucun en attente
+  const [toastQuitter, setToastQuitter] = useState(false);
+
   useEffect(() => {
-    const onPop = (e) => {
-      // Les couches (modales/tiroir) gèrent elles-mêmes leur propre entrée d'historique
-      // via useBackClose. Ici on ne dépile que si l'événement concerne la pile de vues.
-      if (e.state && e.state.layer) return;
-      setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+    const armer = () => window.history.pushState({ drame: true }, "");
+    armer(); // sentinelle initiale : le premier retour nous revient toujours
+
+    const onPop = () => {
+      // 1) Une couche fermable est ouverte → on la ferme, et rien d'autre.
+      if (couchesOuvertes.length > 0) {
+        couchesOuvertes[couchesOuvertes.length - 1].fermer();
+        armer();
+        return;
+      }
+      // 2) Sous-page, détail, formulaire… → on remonte d'un cran.
+      if (stackRef.current.length > 1) {
+        setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+        armer();
+        return;
+      }
+      // 3) Accueil : double appui pour quitter, avec confirmation visible.
+      // (dernierRetourRef vaut null tant qu'aucun premier appui n'a eu lieu — jamais 0, pour
+      // qu'aucun calcul de différence de temps ne puisse être interprété par erreur comme un
+      // second appui immédiat.)
+      const precedent = dernierRetourRef.current;
+      if (precedent !== null && Date.now() - precedent < 2000) {
+        window.history.back(); // second appui dans les 2 s : sortie effective (aucun ré-armement)
+        return;
+      }
+      dernierRetourRef.current = Date.now();
+      setToastQuitter(true);
+      setTimeout(() => { setToastQuitter(false); dernierRetourRef.current = null; }, 2000);
+      armer();
     };
+
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -4437,8 +4540,7 @@ export default function App() {
     setDrawer(false);
     setStack((s) => {
       const cur = s[s.length - 1];
-      if (cur.view === view && cur.id === id) return s; // même vue : rien à empiler
-      window.history.pushState({}, ""); // nouvelle entrée -> le retour reviendra ici
+      if (cur.view === view && cur.id === id) return s; // même vue : rien à empiler (évite les doublons et les boucles)
       return [...s, { view, id }];
     });
   };
@@ -4489,17 +4591,30 @@ export default function App() {
   );
 
   return (
-    <div className={`flex h-screen overflow-hidden bg-slate-50 text-slate-900 ${isDark ? "dark" : ""}`}>
+    // Défilement NATUREL du document (et non un conteneur interne en overflow-y-auto).
+    //
+    // L'ancienne structure (h-screen + overflow-hidden en racine, avec un <main> qui défilait
+    // à l'intérieur) forçait le navigateur à créer une couche de composition dédiée pour ce
+    // conteneur. Sur les GPU de certains téléphones Android, le redessin de cette couche
+    // pendant le défilement laisse apparaître les frontières de tuiles sous forme de bandes
+    // horizontales parasites — exactement les artefacts observés, dans les zones vides entre
+    // les cartes. Le défilement du document, lui, emprunte le chemin optimisé du navigateur
+    // et n'a pas ce défaut.
+    //
+    // La barre latérale (bureau) et l'en-tête restent visibles grâce à `sticky`, qui est
+    // très largement optimisé et ne pose pas ce problème.
+    <div className={`flex min-h-screen bg-slate-50 text-slate-900 ${isDark ? "dark" : ""}`}>
       <FontStyles />
-      <div className="hidden lg:block">{Sidebar}</div>
+      <div className="sticky top-0 hidden h-screen lg:block">{Sidebar}</div>
       <Drawer open={drawer} onClose={() => setDrawer(false)}>{Sidebar}</Drawer>
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3.5 lg:px-8">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3.5 lg:px-8">
           <button onClick={() => setDrawer(true)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"><Menu size={20} /></button>
-          <div className="flex-1"><h1 className="font-display text-lg font-semibold text-slate-900 lg:text-xl">{TITLES[nav.view]}</h1><p className="hidden text-xs text-slate-400 sm:block">{now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p></div>
+          <div className="min-w-0 flex-1"><h1 className="truncate font-display text-lg font-semibold text-slate-900 lg:text-xl">{TITLES[nav.view]}</h1><p className="hidden text-xs text-slate-400 sm:block">{now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p></div>
           <GlobalSearch data={data} go={go} />
         </header>
-        <main className="flex-1 overflow-y-auto p-4 lg:p-8">
+        <main className="p-4 lg:p-8">
+          <ErrorBoundary vue={nav.view + (nav.id || "")} onRetour={() => setStack([{ view: "dashboard", id: null }])}>
           {nav.view === "dashboard" && <Dashboard data={data} go={go} isDark={isDark} />}
           {nav.view === "immeubles" && <Immeubles data={data} setData={setData} go={go} />}
           {nav.view === "immeuble" && <ImmeubleDetail id={nav.id} data={data} setData={setData} go={go} />}
@@ -4518,11 +4633,21 @@ export default function App() {
           {nav.view === "recus" && <Recus data={data} go={go} />}
           {nav.view === "depenses" && <Depenses data={data} setData={setData} go={go} />}
           {nav.view === "documents" && <Documents data={data} setData={setData} go={go} />}
-          {nav.view === "rapports" && <Rapports data={data} isDark={isDark} />}
-          {nav.view === "parametres" && <Parametres data={data} setData={setData} resetDemo={resetDemo} theme={theme} setTheme={setTheme} />}
+          {nav.view === "rapports" && <Rapports data={data} isDark={isDark} go={go} />}
+          {nav.view === "parametres" && <Parametres data={data} setData={setData} resetDemo={resetDemo} theme={theme} setTheme={setTheme} go={go} />}
+          </ErrorBoundary>
         </main>
       </div>
       <VoiceAssistant data={data} setData={setData} go={go} openPaie={openPaie} />
+
+      {/* Confirmation de sortie : premier appui sur Retour depuis l'accueil. */}
+      {toastQuitter && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-24 z-[70] flex justify-center px-4">
+          <div className="rounded-full bg-slate-900/90 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
+            Appuyez encore une fois pour quitter
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4533,6 +4658,15 @@ function FontStyles() {
     *{font-family:'Inter',system-ui,-apple-system,sans-serif}
     .font-display{font-family:'Sora','Inter',sans-serif}
     .tabular-nums{font-variant-numeric:tabular-nums}
+
+    /* ===== Stabilité du rendu sur mobile (Android en particulier) =====
+       - overflow-x:hidden : aucun débordement horizontal du document ne peut créer de
+         bande latérale parasite ni décaler la mise en page ;
+       - overscroll-behavior-y:none : supprime le "rebond" en bout de course, dont le
+         redessin est une source connue d'artefacts sur certains GPU ;
+       - text-size-adjust : empêche Android d'agrandir arbitrairement certains textes,
+         ce qui casse les mises en page en grille. */
+    html,body{overflow-x:hidden;max-width:100%;overscroll-behavior-y:none;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 
     /* ===================== Mode sombre =====================
        Implémenté en CSS "maison" (pas via le variant dark: de Tailwind,
