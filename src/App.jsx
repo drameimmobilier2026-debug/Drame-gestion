@@ -1,9 +1,22 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { supabase } from "./lib/supabase.js";
-import {
-  BarChart, Bar, AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell,
-  PieChart, Pie, CartesianGrid,
-} from "recharts";
+
+/* Les graphiques (et donc toute la bibliothèque recharts, plusieurs centaines de Ko) ne sont
+   téléchargés QUE lorsqu'on ouvre un écran qui en contient — plus au démarrage de l'app.
+   C'est le principal gain de fluidité : l'application démarre bien plus vite, surtout sur
+   téléphone et en connexion lente. */
+const GraphiqueEncaissements = lazy(() => import("./Charts.jsx").then((m) => ({ default: m.GraphiqueEncaissements })));
+const GraphiqueParImmeuble = lazy(() => import("./Charts.jsx").then((m) => ({ default: m.GraphiqueParImmeuble })));
+const GraphiqueRevenusDepenses = lazy(() => import("./Charts.jsx").then((m) => ({ default: m.GraphiqueRevenusDepenses })));
+
+/* Repli affiché pendant le chargement d'un graphique — une zone neutre à la bonne hauteur,
+   pour que la page ne "saute" pas quand le graphique apparaît. */
+const ChargementGraphique = ({ hauteur = 230 }) => (
+  <div className="flex items-center justify-center rounded-xl bg-slate-50" style={{ height: hauteur }}>
+    <span className="text-xs text-slate-400">Chargement du graphique…</span>
+  </div>
+);
+
 import {
   Home, Building2, DoorOpen, Users, Wallet, BarChart3, Mic, Send, Plus, Search,
   LogOut, X, Check, AlertTriangle, TrendingUp, Sparkles, Volume2, VolumeX, Pencil,
@@ -650,35 +663,16 @@ function Dashboard({ data, go, isDark }) {
             <h3 className="font-display text-base font-semibold text-slate-900">Encaissements par échéance</h3>
             <span className="text-xs text-slate-400">6 dernières échéances</span>
           </div>
-          <ResponsiveContainer width="100%" height={230}>
-            <AreaChart data={serie} margin={{ top: 8, right: 6, left: -16, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gEnc" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#0f766e" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="#0f766e" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid vertical={false} stroke={gridColor} />
-              <XAxis dataKey="mois" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tickColor }} />
-              <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tickColor }} tickFormatter={(v) => (v >= 1e6 ? `${v / 1e6}M` : v >= 1e3 ? `${v / 1e3}k` : v)} />
-              <Tooltip formatter={(v) => [money(v), "Encaissé"]} contentStyle={{ borderRadius: 12, border: `1px solid ${isDark ? "#334155" : "#e2e8f0"}`, fontSize: 12, background: isDark ? "#1e293b" : "#fff", color: isDark ? "#f1f5f9" : "#0f172a" }} />
-              <Area type="monotone" dataKey="montant" stroke="#0f766e" strokeWidth={2.5} fill="url(#gEnc)" dot={{ r: 3, fill: "#0f766e" }} activeDot={{ r: 5 }} />
-            </AreaChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChargementGraphique hauteur={230} />}>
+            <GraphiqueEncaissements serie={serie} isDark={isDark} money={money} gridColor={gridColor} tickColor={tickColor} />
+          </Suspense>
         </div>
 
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
           <h3 className="mb-3 font-display text-base font-semibold text-slate-900">Loyers par immeuble</h3>
-          <ResponsiveContainer width="100%" height={230}>
-            <BarChart data={parImmeuble} layout="vertical" margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
-              <XAxis type="number" hide tickFormatter={(v) => `${v / 1e6}M`} />
-              <YAxis type="category" dataKey="nom" width={96} tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: axisColor }} />
-              <Tooltip formatter={(v) => [money(v), "Potentiel/mois"]} contentStyle={{ borderRadius: 12, border: `1px solid ${isDark ? "#334155" : "#e2e8f0"}`, fontSize: 12, background: isDark ? "#1e293b" : "#fff", color: isDark ? "#f1f5f9" : "#0f172a" }} />
-              <Bar dataKey="potentiel" radius={[0, 6, 6, 0]} maxBarSize={30}>
-                <Cell fill="#6366f1" /><Cell fill="#06b6d4" />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChargementGraphique hauteur={230} />}>
+            <GraphiqueParImmeuble parImmeuble={parImmeuble} isDark={isDark} money={money} axisColor={axisColor} />
+          </Suspense>
           <div className="mt-1 flex flex-col gap-1 text-xs text-slate-500">
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-indigo-500" />{imAvance?.nom} · avance</span>
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-cyan-500" />{imEchu?.nom} · échu</span>
@@ -2975,7 +2969,13 @@ function Versements({ data, setData, go }) {
   const societe = p.societe || "La gérance";
   const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "—"; };
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
-  const versements = (data.versements || []).slice().sort((a, b) => b.mois.localeCompare(a.mois));
+  // Mémorisé : le calcul de chaque versement (qui parcourt tous les paiements) était refait
+  // pour CHAQUE carte à CHAQUE rendu. On le fait une seule fois, et on réutilise le résultat.
+  const versementsCalcules = useMemo(
+    () => (data.versements || []).slice().sort((a, b) => b.mois.localeCompare(a.mois)).map((v) => ({ v, c: calcVersement(v, data) })),
+    [data.versements, data.paiements, data.locaux, data.immeubles]
+  );
+  const versements = versementsCalcules.map((x) => x.v);
   const moisDisponibles = Array.from({ length: 8 }, (_, i) => shiftMonth(curMonth, -i)).filter((m) => !(data.versements || []).some((v) => v.mois === m));
   const [recu, setRecu] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -3021,7 +3021,7 @@ function Versements({ data, setData, go }) {
         <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-10 text-center text-sm text-slate-400 shadow-sm">Aucun versement.</div>
       ) : (
         <div className="space-y-3">
-          {versements.map((v) => { const c = calcVersement(v, data); return (
+          {versementsCalcules.map(({ v, c }) => (
             <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -3057,7 +3057,7 @@ function Versements({ data, setData, go }) {
                 <button onClick={() => del(v.id)} className="rounded-lg border border-slate-200 p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Supprimer"><Trash2 size={16} /></button>
               </div>
             </div>
-          ); })}
+          ))}
         </div>
       )}
 
@@ -3116,7 +3116,13 @@ function MesCommissions({ data, setData, go, isDark }) {
   // jamais limitée à une période choisie (sinon le chiffre affiché mentirait sur ce qu'il reste).
   // Règle métier : la commission n'est réellement perçue que lorsque TOUS les locataires du cycle
   // ont payé (c.complete) — un versement marqué fait sur une collecte partielle ne compte pas encore.
-  const lignesToutes = (data.versements || []).slice().sort((a, b) => b.mois.localeCompare(a.mois)).map((v) => ({ v, c: calcVersement(v, data) }));
+  // Mémorisé : calcVersement parcourt tous les paiements pour CHAQUE versement — c'est de loin
+  // le calcul le plus lourd de cet écran. Sans mémorisation, il était refait intégralement à
+  // chaque rendu (y compris à chaque frappe dans un champ), d'où les à-coups ressentis.
+  const lignesToutes = useMemo(
+    () => (data.versements || []).slice().sort((a, b) => b.mois.localeCompare(a.mois)).map((v) => ({ v, c: calcVersement(v, data) })),
+    [data.versements, data.paiements, data.locaux, data.immeubles]
+  );
   const totalDeduitToutes = lignesToutes.filter((l) => l.v.statut === "verse" && l.c.complete).reduce((s, l) => s + l.c.commission, 0);
   const consommationsToutes = (data.consommations || []).slice().sort((a, b) => b.date.localeCompare(a.date));
   const totalConsommeToutes = consommationsToutes.reduce((s, c) => s + c.montant, 0);
@@ -3432,17 +3438,9 @@ function Rapports({ data, isDark, go }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm lg:col-span-2">
           <h3 className="mb-4 font-display text-base font-semibold text-slate-900">Revenus, dépenses & net</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={serie} margin={{ top: 6, right: 0, left: -8, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke={gridColor} />
-              <XAxis dataKey="mois" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tickColor }} />
-              <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tickColor }} tickFormatter={(v) => (v >= 1e6 ? `${v / 1e6}M` : v)} />
-              <Tooltip formatter={(v, n) => [money(v), n === "enc" ? "Encaissé" : n === "dep" ? "Dépenses" : "Net"]} contentStyle={tooltipStyle} />
-              <Bar dataKey="enc" fill="#0f766e" radius={[6, 6, 0, 0]} maxBarSize={20} />
-              <Bar dataKey="dep" fill="#fb7185" radius={[6, 6, 0, 0]} maxBarSize={20} />
-              <Bar dataKey="net" fill="#34d399" radius={[6, 6, 0, 0]} maxBarSize={20} />
-            </BarChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChargementGraphique hauteur={260} />}>
+            <GraphiqueRevenusDepenses serie={serie} isDark={isDark} money={money} gridColor={gridColor} tickColor={tickColor} />
+          </Suspense>
           <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-slate-500">
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-teal-700" />Encaissé</span>
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-400" />Dépenses</span>
@@ -4659,14 +4657,13 @@ function FontStyles() {
     .font-display{font-family:'Sora','Inter',sans-serif}
     .tabular-nums{font-variant-numeric:tabular-nums}
 
-    /* ===== Stabilité du rendu sur mobile (Android en particulier) =====
-       - overflow-x:hidden : aucun débordement horizontal du document ne peut créer de
-         bande latérale parasite ni décaler la mise en page ;
-       - overscroll-behavior-y:none : supprime le "rebond" en bout de course, dont le
-         redessin est une source connue d'artefacts sur certains GPU ;
-       - text-size-adjust : empêche Android d'agrandir arbitrairement certains textes,
-         ce qui casse les mises en page en grille. */
-    html,body{overflow-x:hidden;max-width:100%;overscroll-behavior-y:none;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+    /* ===== Stabilité du rendu sur mobile =====
+       Volontairement minimal : la règle overflow-x:hidden sur html/body a été RETIRÉE, car
+       elle transforme html en conteneur de défilement et entre en conflit avec le défilement
+       du document — ce qui rendait le défilement saccadé, voire impossible, sur téléphone.
+       Le débordement horizontal est déjà maîtrisé proprement au niveau de la mise en page
+       (min-w-0, truncate, overflow-x-auto sur les tableaux), sans toucher au défilement. */
+    html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 
     /* ===================== Mode sombre =====================
        Implémenté en CSS "maison" (pas via le variant dark: de Tailwind,
