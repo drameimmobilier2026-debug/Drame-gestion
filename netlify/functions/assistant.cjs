@@ -39,7 +39,7 @@ exports.handler = async (event) => {
     const timeoutId = setTimeout(() => controller.abort(), 6000);
     let res;
     try {
-      res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", {
+      res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
