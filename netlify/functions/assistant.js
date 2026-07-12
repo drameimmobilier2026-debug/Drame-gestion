@@ -1,18 +1,16 @@
-// Fonction serverless Netlify : relaie la requête de l'assistant vocal vers l'API Anthropic.
-// La clé API reste côté serveur (variable d'environnement ANTHROPIC_API_KEY) — elle n'est
-// JAMAIS exposée dans le navigateur. Le front appelle /.netlify/functions/assistant.
+// Fonction serverless Netlify : relaie la requête de l'assistant vocal vers l'API Google Gemini
+// (palier gratuit et durable, sans carte bancaire — contrairement à l'API Anthropic qui exige
+// un moyen de paiement). La clé API reste côté serveur (variable d'environnement GEMINI_API_KEY)
+// — elle n'est JAMAIS exposée dans le navigateur. Le front appelle /.netlify/functions/assistant.
 //
 // Tout le corps est enveloppé dans un try/catch global : la moindre erreur inattendue (y
 // compris un plantage avant même d'atteindre notre propre gestion d'erreur) renvoie un JSON
 // exploitable plutôt qu'un 502 muet généré par Netlify lui-même.
 //
 // Les fonctions Netlify synchrones ont une limite dure de 10 secondes — au-delà, Netlify tue
-// le processus et renvoie un 502 générique, sans laisser la moindre chance à notre propre
-// gestion d'erreur de s'exécuter. Le délai contrôlé ci-dessous est fixé à 6s (pas 8s) pour
-// laisser de la marge au démarrage à froid de la fonction elle-même, qui peut consommer 1 à 3s
-// avant même que ce code ne commence à s'exécuter — sans cette marge, notre propre délai peut
-// se déclencher trop tard, après que Netlify ait déjà tué le processus (d'où un 502 muet malgré
-// notre gestion d'erreur).
+// le processus et renvoie un 502 générique. Le délai contrôlé à 6s laisse de la marge au
+// démarrage à froid de la fonction ; Gemini a par ailleurs la réputation d'être rapide, ce qui
+// aide aussi à rester dans les temps.
 exports.handler = async (event) => {
   try {
     if (event.httpMethod !== "POST") {
@@ -23,9 +21,9 @@ exports.handler = async (event) => {
       return { statusCode: 500, body: JSON.stringify({ error: "fetch indisponible sur ce runtime Netlify (Node trop ancien) — vérifiez NODE_VERSION dans netlify.toml." }) };
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return { statusCode: 500, body: JSON.stringify({ error: "ANTHROPIC_API_KEY non configurée sur Netlify." }) };
+      return { statusCode: 500, body: JSON.stringify({ error: "GEMINI_API_KEY non configurée sur Netlify." }) };
     }
 
     let system = "", message = "";
@@ -41,31 +39,33 @@ exports.handler = async (event) => {
     const timeoutId = setTimeout(() => controller.abort(), 6000);
     let res;
     try {
-      res = await fetch("https://api.anthropic.com/v1/messages", {
+      res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
+          "x-goog-api-key": apiKey,
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 200, // réponses courtes par design (1-2 phrases) — resserré encore pour réduire le pire des cas
-          system,
-          messages: [{ role: "user", content: message }],
+          contents: [{ role: "user", parts: [{ text: message }] }],
+          systemInstruction: { parts: [{ text: system }] },
+          generationConfig: {
+            maxOutputTokens: 200,
+            responseMimeType: "application/json",
+          },
         }),
         signal: controller.signal,
       });
     } catch (e) {
       if (e.name === "AbortError") {
-        return { statusCode: 504, body: JSON.stringify({ error: "L'IA a mis plus de 6 secondes à répondre (probablement un démarrage à froid de la fonction) — réessayez, la seconde tentative est généralement plus rapide." }) };
+        return { statusCode: 504, body: JSON.stringify({ error: "L'IA a mis plus de 6 secondes à répondre — réessayez, la seconde tentative est généralement plus rapide." }) };
       }
       throw e;
     } finally {
       clearTimeout(timeoutId);
     }
     const data = await res.json();
-    // On renvoie tel quel : le front lit data.content comme une réponse Anthropic classique.
+    // On renvoie tel quel : le front lit data.candidates[0].content.parts (forme Gemini),
+    // différente de la forme Anthropic (data.content) utilisée par l'aperçu Claude.
     return { statusCode: res.status, headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) };
   } catch (e) {
     return { statusCode: 502, body: JSON.stringify({ error: "Erreur inattendue dans la fonction assistant: " + (e && e.message ? e.message : String(e)) }) };

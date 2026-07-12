@@ -3824,14 +3824,17 @@ Données actuelles : ${JSON.stringify(ctx)}`;
       const res = await fetch("/.netlify/functions/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system, message: clean }) });
       const d = await res.json().catch(() => null);
       if (!res.ok) {
-        // Faire remonter le vrai message (de notre fonction, ou de l'API Anthropic elle-même
-        // si la requête l'a atteinte mais a été refusée) plutôt qu'un message générique qui
+        // Faire remonter le vrai message (de notre fonction, ou de l'API Gemini elle-même si
+        // la requête l'a atteinte mais a été refusée) plutôt qu'un message générique qui
         // masquerait la cause réelle — d.error peut être une chaîne (nos propres erreurs) ou
-        // un objet {message} (erreurs Anthropic renvoyées telles quelles).
+        // un objet {message} (forme d'erreur Gemini/Google, renvoyée telle quelle).
         const detail = (typeof d?.error === "string" ? d.error : d?.error?.message) || `HTTP ${res.status}`;
         throw new Error(detail);
       }
-      let raw = (d.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim().replace(/```json/gi, "").replace(/```/g, "").trim();
+      // Forme de réponse Gemini (différente d'Anthropic) : candidates[0].content.parts[].text.
+      // responseMimeType:"application/json" côté fonction garantit déjà du JSON valide, mais on
+      // retire quand même d'éventuelles balises markdown par sécurité.
+      let raw = (d.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("\n").trim().replace(/```json/gi, "").replace(/```/g, "").trim();
       let parsed; try { parsed = JSON.parse(raw); } catch { parsed = { reponse: raw || "Je n'ai pas compris, reformulez ?", action: "aucune", params: {} }; }
       const rep = parsed.reponse || "C'est fait.";
       let extra = null;
