@@ -49,7 +49,7 @@ exports.handler = async (event) => {
           contents: [{ role: "user", parts: [{ text: message }] }],
           systemInstruction: { parts: [{ text: system }] },
           generationConfig: {
-            maxOutputTokens: 200,
+            maxOutputTokens: 300,
             responseMimeType: "application/json",
           },
         }),

@@ -303,7 +303,7 @@ function seed() {
   const paiements = locaux.filter((l) => l.statut === "loue").map((l) => {
     const t = locataires.find((x) => x.localId === l.id);
     const mois = modeOf(l.immeubleId) === "avance" ? moisAvance : moisEchu;
-    return { id: uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t?.id || null, mois, montant: l.loyer + l.charges, statut: "en_attente", datePaiement: null };
+    return { id: uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t?.id || null, mois, montant: l.loyer + (l.charges || 0), statut: "en_attente", datePaiement: null };
   });
   // Dépenses, documents et versements : aucune donnée réelle fournie pour l'instant.
   const depenses = [];
@@ -480,7 +480,7 @@ function Dashboard({ data, go, isDark }) {
   }), [paiements]);
 
   const parImmeuble = immeubles.map((im) => ({
-    nom: im.nom, potentiel: sum(locaux.filter((l) => l.immeubleId === im.id && l.statut === "loue").map((l) => ({ montant: l.loyer + l.charges }))),
+    nom: im.nom, potentiel: sum(locaux.filter((l) => l.immeubleId === im.id && l.statut === "loue").map((l) => ({ montant: l.loyer + (l.charges || 0) }))),
   }));
 
   const aRecouvrer = [...avancePaie, ...echuPaie].filter((p) => p.statut !== "paye");
@@ -786,7 +786,7 @@ function QuittanceModal({ paiement, data, onClose, go }) {
 
                 {estPayeDavance(paiement) && (
                   <button onClick={() => go && go("avances")} className="mt-4 block w-full rounded-xl border border-cyan-200 bg-cyan-50 p-3.5 text-left transition hover:bg-cyan-100">
-                    <p className="flex items-center gap-1.5 text-xs font-semibold text-cyan-700"><CalendarCheck size={13} /> Payé d'avance</p>
+                    <p className="flex items-center gap-1.5 text-xs font-semibold text-cyan-700"><CalendarCheck size={13} /> Payé à l'avance</p>
                     <p className="mt-0.5 text-xs text-cyan-700">Ce loyer a été réglé avant son mois normal — voir toutes les avances →</p>
                   </button>
                 )}
@@ -857,7 +857,7 @@ function PaymentsTable({ list, data, setData, go }) {
                   <td className="px-5 py-3.5 text-slate-500">{go ? <button onClick={() => go("local", p.localId)} className="hover:text-teal-700">{localNom(p.localId)}</button> : localNom(p.localId)}</td>
                   <td className="px-5 py-3.5 text-slate-500">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</td>
                   <td className="px-5 py-3.5 text-right font-display font-semibold tabular-nums text-slate-900">{money(p.montant)}</td>
-                  <td className="px-5 py-3.5"><div className="flex flex-wrap items-center gap-1.5"><Badge statut={p.statut} />{estPayeDavance(p) && (go ? <button onClick={() => go("avances")} className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">avance</button> : <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700">avance</span>)}</div></td>
+                  <td className="px-5 py-3.5"><div className="flex flex-wrap items-center gap-1.5"><Badge statut={p.statut} />{estPayeDavance(p) && (go ? <button onClick={() => go("avances")} title="Payé à l'avance" className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">avance</button> : <span title="Payé à l'avance" className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700">avance</span>)}</div></td>
                   <td className="px-5 py-3.5 text-right">
                     {p.statut !== "paye"
                       ? (
@@ -926,7 +926,7 @@ function Immeubles({ data, setData, go }) {
         {data.immeubles.map((im) => {
           const locaux = data.locaux.filter((l) => l.immeubleId === im.id);
           const occ = locaux.filter((l) => l.statut === "loue").length;
-          const potentiel = locaux.filter((l) => l.statut === "loue").reduce((s, l) => s + l.loyer + l.charges, 0);
+          const potentiel = locaux.filter((l) => l.statut === "loue").reduce((s, l) => s + l.loyer + (l.charges || 0), 0);
           return (
             <div key={im.id} className="group rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm transition hover:shadow-md">
               <button onClick={() => go("immeuble", im.id)} className="block w-full text-left">
@@ -987,7 +987,7 @@ function ImmeubleDetail({ id, data, setData, go }) {
   if (!im) return null;
   const locaux = data.locaux.filter((l) => l.immeubleId === id);
   const occ = locaux.filter((l) => l.statut === "loue");
-  const potentiel = occ.reduce((s, l) => s + l.loyer + l.charges, 0);
+  const potentiel = occ.reduce((s, l) => s + l.loyer + (l.charges || 0), 0);
   const moisPertinent = im.mode === "avance" ? moisAvance : moisEchu;
   const paie = data.paiements.filter((p) => p.immeubleId === id && p.mois === moisPertinent);
   const enc = paie.filter((p) => p.statut === "paye").reduce((s, p) => s + p.montant, 0);
@@ -1007,7 +1007,7 @@ function ImmeubleDetail({ id, data, setData, go }) {
             <div><p className="text-sm font-medium text-slate-900">{l.nom}</p><p className="text-xs text-slate-400">{l.type}{l.pieces ? ` · ${l.pieces} ch.` : ""}{l.surface ? ` · ${l.surface} m²` : ""} · {t ? `${t.prenom} ${t.nom}` : "vacant"}</p></div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="font-display text-sm font-semibold tabular-nums text-slate-900">{money(l.loyer + l.charges)}</span>
+            <span className="font-display text-sm font-semibold tabular-nums text-slate-900">{money(l.loyer + (l.charges || 0))}</span>
             <Badge statut={l.statut} />
           </div>
         </button>
@@ -1100,7 +1100,7 @@ function Locaux({ data, setData, go }) {
                 <p className="mt-2 text-xs text-slate-500">{t ? `Occupé par ${t.prenom} ${t.nom}` : "Aucun locataire"}</p>
               </button>
               <div className="mt-4 flex items-end justify-between border-t border-slate-100 pt-3">
-                <span className="font-display text-lg font-semibold tabular-nums text-slate-900">{money(l.loyer + l.charges)}</span>
+                <span className="font-display text-lg font-semibold tabular-nums text-slate-900">{money(l.loyer + (l.charges || 0))}</span>
                 <div className="flex gap-1 transition">
                   <button onClick={() => open(l)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
                   <button onClick={() => del(l.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
@@ -1153,7 +1153,7 @@ function LocalDetail({ id, data, setData, go }) {
           {l.bloc && <MiniStat label="Bloc" value={l.bloc} />}
           <MiniStat label="Chambres" value={l.pieces ? `${l.pieces} chambre${l.pieces > 1 ? "s" : ""}` : "—"} />
           <MiniStat label="Surface" value={l.surface ? `${l.surface} m²` : "Non renseignée"} />
-          <MiniStat label="Loyer / mois" value={money(l.loyer + l.charges)} tint="text-teal-700" />
+          <MiniStat label="Loyer / mois" value={money(l.loyer + (l.charges || 0))} tint="text-teal-700" />
           <MiniStat label="Mode" value={im?.mode === "avance" ? "En avance" : "Terme échu"} />
         </div>
         <div className="mt-4 rounded-xl bg-slate-50 p-4">
@@ -1283,7 +1283,7 @@ function LocataireDetail({ id, data, setData, go }) {
     const mode = data.immeubles.find((i) => i.id === l.immeubleId)?.mode;
     const mois = mode === "avance" ? moisAvance : moisEchu;
     const pay = data.paiements.find((x) => x.localId === l.id && x.mois === mois);
-    infoActuel = { local: l, mois, montant: l.loyer + l.charges, statut: pay ? pay.statut : "en_attente" };
+    infoActuel = { local: l, mois, montant: l.loyer + (l.charges || 0), statut: pay ? pay.statut : "en_attente" };
   }
   // Combien de mois consécutifs (à partir du cycle en cours) sont déjà payés d'avance —
   // simple indicateur, la logique de versement mensuelle elle-même ne change pas.
@@ -1318,7 +1318,7 @@ function LocataireDetail({ id, data, setData, go }) {
       for (let i = 0; i < n; i++) {
         const mois = shiftMonth(infoActuel.mois, i);
         const idx = paiements.findIndex((p) => p.localId === l.id && p.mois === mois);
-        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + l.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycleLoc ? curMonth : null };
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + (l.charges || 0), statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycleLoc ? curMonth : null };
         if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
       }
       return { ...d, paiements };
@@ -1388,7 +1388,7 @@ function LocataireDetail({ id, data, setData, go }) {
             <div className="text-[11px] font-medium text-slate-500">Immeuble</div>
             {im ? <button onClick={() => go("immeuble", im.id)} className="mt-0.5 font-display text-sm font-semibold text-teal-700 hover:underline">{im.nom}</button> : <div className="mt-0.5 text-sm text-slate-400">—</div>}
           </div>
-          <MiniStat label="Loyer / mois" value={money(l ? l.loyer + l.charges : 0)} />
+          <MiniStat label="Loyer / mois" value={money(l ? l.loyer + (l.charges || 0) : 0)} />
           {impaye > 0 ? (
             <button onClick={() => go("arrieres")} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-left transition hover:bg-rose-100">
               <div className="text-[11px] font-medium text-rose-600">Impayé — voir dans Arriérés</div>
@@ -1421,7 +1421,7 @@ function LocataireDetail({ id, data, setData, go }) {
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h3 className="font-display text-base font-semibold text-slate-900">Paiements</h3>
-            {moisAvance_count > 1 && <button onClick={() => go("avances")} className="mt-0.5 text-xs font-medium text-cyan-700 hover:underline">Payé d'avance jusqu'à {cap(moisNom(paieAvanceJusqua))} {paieAvanceJusqua.slice(0, 4)} ({moisAvance_count} mois) →</button>}
+            {moisAvance_count > 1 && <button onClick={() => go("avances")} className="mt-0.5 text-xs font-medium text-cyan-700 hover:underline">Payé à l'avance jusqu'à {cap(moisNom(paieAvanceJusqua))} {paieAvanceJusqua.slice(0, 4)} ({moisAvance_count} mois) →</button>}
           </div>
           {infoActuel && <button onClick={() => setAvanceOpen(true)} className="flex shrink-0 items-center gap-1 text-xs font-medium text-teal-700 hover:text-teal-800"><PlusCircle size={14} /> Paiement d'avance</button>}
         </div>
@@ -1559,7 +1559,7 @@ function Paiements({ data, setData, go, filter, setFilter }) {
     .filter((l) => f.immeuble === "all" || !f.immeuble || l.immeubleId === f.immeuble)
     .map((l) => {
       const t = data.locataires.find((x) => x.localId === l.id);
-      return { id: null, virtuel: true, localId: l.id, immeubleId: l.immeubleId, locataireId: t?.id || null, mois: moisDuLocal(l.immeubleId), montant: l.loyer + l.charges, statut: "en_attente", datePaiement: null };
+      return { id: null, virtuel: true, localId: l.id, immeubleId: l.immeubleId, locataireId: t?.id || null, mois: moisDuLocal(l.immeubleId), montant: l.loyer + (l.charges || 0), statut: "en_attente", datePaiement: null };
     });
 
   const list = [...paiementsExistants, ...lignesVirtuelles]
@@ -1585,7 +1585,7 @@ function Paiements({ data, setData, go, filter, setFilter }) {
     const l = data.locaux.find((x) => x.id === localId);
     const t = data.locataires.find((x) => x.localId === localId);
     const moisRef = moisEnCoursPour(localId);
-    setForm((fm) => ({ ...fm, localId, montant: l ? l.loyer + l.charges : fm.montant, mois: fm.typePaiement === "encours" ? moisRef : fm.mois }));
+    setForm((fm) => ({ ...fm, localId, montant: l ? l.loyer + (l.charges || 0) : fm.montant, mois: fm.typePaiement === "encours" ? moisRef : fm.mois }));
     setTenantQuery(t ? `${t.prenom} ${t.nom}` : "");
   };
   // Change de précision de paiement : recalcule un mois par défaut cohérent avec la nouvelle
@@ -1966,7 +1966,7 @@ function Avances({ data, setData, go }) {
         // cycle de versement actif, pas le mois de loyer) : si "Oui", TOUS les mois de cette
         // avance sont rattachés au versement en cours, et ne seront plus jamais recomptés à leur
         // propre échéance naturelle. Si "Non", chaque mois garde son cycle naturel (inchangé).
-        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois, montant: local.loyer + local.charges, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycle ? curMonth : null };
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois, montant: local.loyer + (local.charges || 0), statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycle ? curMonth : null };
         if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
       }
       return { ...d, paiements };
@@ -2033,11 +2033,23 @@ function Avances({ data, setData, go }) {
     ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
     a.lignes.forEach((p) => {
       ops.push({ type: "text", x: 50, y, size: 10, font: "R", color: [0.2, 0.2, 0.2], text: `${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}` });
+      // Statut indicatif : ce mois a-t-il déjà été reversé au propriétaire (dans le versement de
+      // tel mois), ou attend-il encore son propre cycle naturel ? Distinction importante pour que
+      // le propriétaire ne compte pas deux fois le même argent en lisant ce relevé.
+      if (p.verseAvec) {
+        ops.push({ type: "text", x: 280, y, size: 8, font: "R", color: [0.02, 0.45, 0.3], text: `déjà versé (${cap(moisNom(p.verseAvec))})` });
+      } else {
+        ops.push({ type: "text", x: 280, y, size: 8, font: "R", color: [0.4, 0.5, 0.55], text: "en attente de son cycle" });
+      }
       ops.push({ type: "text", x: 460, y, size: 10, font: "R", color: [0.1, 0.1, 0.1], text: money(p.montant) });
       y -= 20;
     });
     ops.push({ type: "line", x1: 50, y1: y + 10, x2: 545, y2: y + 10, color: [0.8, 0.8, 0.8], width: 0.5 });
-    y -= 25;
+    y -= 20;
+    ops.push({ type: "text", x: 50, y, size: 8, font: "R", color: [0.45, 0.55, 0.5], text: "« déjà versé » : ce montant a été inclus dans le net déjà remis au propriétaire — à ne pas recompter." });
+    y -= 14;
+    ops.push({ type: "text", x: 50, y, size: 8, font: "R", color: [0.45, 0.55, 0.5], text: "« en attente » : ce montant sera versé normalement lors du cycle correspondant à son mois." });
+    y -= 20;
     ops.push({ type: "text", x: 50, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: `Relevé émis le ${dateFr(new Date().toISOString().slice(0, 10))}.` });
     y -= 25;
     ops.push({ type: "text", x: 50, y, size: 9, font: "B", color: [0.2, 0.2, 0.2], text: signatureGestionnaire(data) });
@@ -2142,7 +2154,11 @@ function Avances({ data, setData, go }) {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {a.lignes.map((p) => <button key={p.id} onClick={() => go("versements")} title="Voir dans Versements" className="rounded-full bg-cyan-50 px-2.5 py-0.5 text-[11px] font-medium text-cyan-700 hover:bg-cyan-100">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</button>)}
+                  {a.lignes.map((p) => (
+                    <button key={p.id} onClick={() => go("versements")} title={p.verseAvec ? `Inclus dans le versement de ${cap(moisNom(p.verseAvec))} ${p.verseAvec.slice(0, 4)}` : "En attente de son propre cycle de versement"} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${p.verseAvec ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+                      {cap(moisNom(p.mois))} {p.mois.slice(0, 4)} {p.verseAvec ? "· déjà versé" : "· en attente"}
+                    </button>
+                  ))}
                 </div>
 
                 <div className="mt-3.5 flex flex-wrap items-center gap-2">
@@ -2187,10 +2203,17 @@ function Avances({ data, setData, go }) {
                   <p className="mt-5 text-xs font-medium text-slate-500">Détail par mois</p>
                   <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-100">
                     {releve.lignes.map((p) => (
-                      <div key={p.id} className="flex items-center justify-between px-4 py-2.5 text-sm"><span className="text-slate-700">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span><span className="font-medium tabular-nums text-slate-900">{money(p.montant)}</span></div>
+                      <div key={p.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                        <span className="min-w-0 truncate text-slate-700">{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span>
+                        {p.verseAvec
+                          ? <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">déjà versé ({cap(moisNom(p.verseAvec))})</span>
+                          : <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">en attente</span>}
+                        <span className="shrink-0 font-medium tabular-nums text-slate-900">{money(p.montant)}</span>
+                      </div>
                     ))}
                   </div>
-                  <p className="mt-5 text-xs text-slate-400">Relevé émis le {dateFr(new Date().toISOString().slice(0, 10))}.</p>
+                  <p className="mt-2 text-[11px] leading-relaxed text-slate-400">« Déjà versé » : montant déjà inclus dans un net remis au propriétaire — à ne pas recompter. « En attente » : sera versé normalement lors de son propre cycle.</p>
+                  <p className="mt-3 text-xs text-slate-400">Relevé émis le {dateFr(new Date().toISOString().slice(0, 10))}.</p>
                 </div>
               </div>
               <div className="mt-5 flex flex-wrap gap-2">
@@ -2213,7 +2236,7 @@ function Avances({ data, setData, go }) {
           {locataireChoisi && (() => {
             const choix = locatairesOptions.find((x) => x.tenant.id === locataireChoisi);
             if (!choix) return null;
-            const montant = choix.local.loyer + choix.local.charges;
+            const montant = choix.local.loyer + (choix.local.charges || 0);
             const n = Math.max(1, Math.min(24, +nbMoisAjout || 1));
             const moisDepart = modeOf(choix.local.immeubleId) === "avance" ? moisAvance : moisEchu;
             const moisFin = shiftMonth(moisDepart, n - 1);
@@ -2464,7 +2487,7 @@ function Rappels({ data, setData, go }) {
   const [copied, setCopied] = useState(false);
 
   const tenants = data.locataires.filter((t) => t.localId);
-  const infoFor = (t) => { const l = data.locaux.find((x) => x.id === t.localId); if (!l) return null; const mode = modeOf(l.immeubleId); const mois = mode === "avance" ? moisAvance : moisEchu; const pay = data.paiements.find((x) => x.localId === l.id && x.mois === mois); return { local: l, mois, montant: l.loyer + l.charges, statut: pay ? pay.statut : "en_attente", datePaiement: pay?.datePaiement || null }; };
+  const infoFor = (t) => { const l = data.locaux.find((x) => x.id === t.localId); if (!l) return null; const mode = modeOf(l.immeubleId); const mois = mode === "avance" ? moisAvance : moisEchu; const pay = data.paiements.find((x) => x.localId === l.id && x.mois === mois); return { local: l, mois, montant: l.loyer + (l.charges || 0), statut: pay ? pay.statut : "en_attente", datePaiement: pay?.datePaiement || null }; };
   const build = (tpl, t, info) => buildRappelMessage(tpl, t, info, societe);
   const lastRappel = (id) => { const rs = (data.rappels || []).filter((r) => r.locataireId === id); return rs.length ? rs.slice().sort((a, b) => b.date.localeCompare(a.date))[0].date : null; };
   const saveTpl = () => { setData((d) => ({ ...d, parametres: { ...(d.parametres || {}), rappelGeneral: tplG, rappelRetard: tplR } })); setToast("Modèles enregistrés"); setTimeout(() => setToast(""), 2000); };
@@ -2542,7 +2565,7 @@ function Rappels({ data, setData, go }) {
               {modal.recipients.map((r, i) => (
                 <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">{r.t.prenom} {r.t.nom}{estPayeDavance(r.info) && <button onClick={() => go("avances")} className="rounded-full bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">déjà payé d'avance</button>}</span>
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">{r.t.prenom} {r.t.nom}{estPayeDavance(r.info) && <button onClick={() => go("avances")} className="rounded-full bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">déjà payé à l'avance</button>}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-400">{r.t.telephone || "sans numéro"}</span>
                       <a
@@ -2674,7 +2697,8 @@ function genererVersementPdf(versement, data) {
     } else {
       for (const x of g.items) {
         ops.push({ type: "text", x: 58, y, size: 9, font: "R", color: [0.2, 0.2, 0.2], text: nom(x.locataireId) });
-        if (estPayeDavance(x)) ops.push({ type: "text", x: 58 + Math.min(180, nom(x.locataireId).length * 5 + 6), y, size: 7, font: "R", color: [0.05, 0.35, 0.45], text: "(payé d'avance)" });
+        if (x.verseAvec) ops.push({ type: "text", x: 58 + Math.min(180, nom(x.locataireId).length * 5 + 6), y, size: 7, font: "B", color: [0.02, 0.45, 0.3], text: "(avance ajoutée à ce versement)" });
+        else if (estPayeDavance(x)) ops.push({ type: "text", x: 58 + Math.min(180, nom(x.locataireId).length * 5 + 6), y, size: 7, font: "R", color: [0.05, 0.35, 0.45], text: "(payé à l'avance)" });
         ops.push({ type: "text", x: 280, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: localNom(x.localId) });
         ops.push({ type: "text", x: 460, y, size: 9, font: "R", color: [0.1, 0.1, 0.1], text: money(x.montant) });
         y -= 15;
@@ -2814,7 +2838,7 @@ function VersementRecuModal({ versement, data, onClose }) {
                       ) : (
                         <div className="divide-y divide-slate-100">
                           {g.items.map((x) => (
-                            <div key={x.id} className="flex items-center justify-between px-4 py-2 text-sm"><span className="min-w-0 truncate text-slate-700">{nom(x.locataireId)} <span className="text-slate-400">· {localNom(x.localId)}</span>{estPayeDavance(x) && <span className="ml-1.5 rounded bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700">payé d'avance</span>}</span><span className="shrink-0 font-medium tabular-nums text-slate-900">{money(x.montant)}</span></div>
+                            <div key={x.id} className="flex items-center justify-between px-4 py-2 text-sm"><span className="min-w-0 truncate text-slate-700">{nom(x.locataireId)} <span className="text-slate-400">· {localNom(x.localId)}</span>{x.verseAvec ? <span className="ml-1.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">avance ajoutée à ce versement</span> : estPayeDavance(x) && <span className="ml-1.5 rounded bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700">payé à l'avance</span>}</span><span className="shrink-0 font-medium tabular-nums text-slate-900">{money(x.montant)}</span></div>
                           ))}
                         </div>
                       )}
@@ -3405,7 +3429,7 @@ function Recus({ data, go }) {
                         <td className="px-5 py-3.5"><button onClick={() => go("locataire", p.locataireId)} className="font-medium text-slate-900 hover:text-teal-700">{nom(p.locataireId)}</button></td>
                         <td className="px-5 py-3.5 text-slate-500"><button onClick={() => go("local", p.localId)} className="hover:text-teal-700">{localNom(p.localId)}</button></td>
                         <td className="px-5 py-3.5 text-slate-500">{imNom(p.immeubleId)}</td>
-                        <td className="px-5 py-3.5 text-slate-500"><span>{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span>{estPayeDavance(p) && <button onClick={() => go("avances")} className="ml-1.5 rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">avance</button>}</td>
+                        <td className="px-5 py-3.5 text-slate-500"><span>{cap(moisNom(p.mois))} {p.mois.slice(0, 4)}</span>{estPayeDavance(p) && <button onClick={() => go("avances")} title="Payé à l'avance" className="ml-1.5 rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100">avance</button>}</td>
                         <td className="whitespace-nowrap px-5 py-3.5 text-slate-500">{p.datePaiement || "—"}</td>
                         <td className="px-5 py-3.5 text-right font-display font-semibold tabular-nums text-slate-900">{money(p.montant)}</td>
                         <td className="px-5 py-3.5 text-right">
@@ -3675,7 +3699,7 @@ function buildContext(data) {
     // taille du contexte envoyé à chaque requête, donc le temps de traitement côté IA.
     locaux: data.locaux.map((l) => {
       const occ = data.locataires.find((t) => t.localId === l.id);
-      return { nom: l.nom, immeuble: imNom(l.immeubleId), statut: l.statut, loyer: l.loyer + l.charges, occupant: occ ? `${occ.prenom} ${occ.nom}` : null, telephone: occ?.telephone || null };
+      return { nom: l.nom, immeuble: imNom(l.immeubleId), statut: l.statut, loyer: l.loyer + (l.charges || 0), occupant: occ ? `${occ.prenom} ${occ.nom}` : null, telephone: occ?.telephone || null };
     }),
     recouvrement: {
       [`${moisNom(moisEchu)}_echu`]: { encaisse: sum(ec.filter((p) => p.statut === "paye")), du: sum(ec) },
@@ -3731,7 +3755,7 @@ function VoiceAssistant({ data, setData, go, openPaie }) {
       if (!local) return null;
       const im = data.immeubles.find((i) => i.id === local.immeubleId);
       const mois = parseMois(moisParam) || (im?.mode === "avance" ? moisAvance : moisEchu);
-      const montant = parseMontant(montantParam) || (local.loyer + local.charges);
+      const montant = parseMontant(montantParam) || (local.loyer + (local.charges || 0));
       const existant = data.paiements.find((p) => p.localId === local.id && p.mois === mois);
       const paiement = { id: existant?.id || uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: locataire.id, mois, montant, statut: "paye", datePaiement: new Date().toISOString().slice(0, 10) };
       const paiementsApres = existant ? data.paiements.map((p) => (p.id === existant.id ? paiement : p)) : [...data.paiements, paiement];
@@ -3757,15 +3781,15 @@ function VoiceAssistant({ data, setData, go, openPaie }) {
 
     if (action === "enregistrer_paiement" || action === "marquer_paye") {
       const locataire = trouverLocataire(params.locataire);
-      if (!locataire || !locataire.localId) return null;
+      if (!locataire || !locataire.localId) throw new Error(`Locataire ou local introuvable pour "${params.locataire || "?"}".`);
       return enregistrerPaiement(locataire, params.mois, params.montant);
     }
 
     if (action === "envoyer_quittance") {
       const locataire = trouverLocataire(params.locataire);
-      if (!locataire) return null;
+      if (!locataire) throw new Error(`Locataire introuvable pour "${params.locataire || "?"}".`);
       const dernier = data.paiements.filter((p) => p.locataireId === locataire.id && p.statut === "paye").sort((a, b) => b.mois.localeCompare(a.mois))[0];
-      if (!dernier) return null;
+      if (!dernier) throw new Error(`Aucune quittance déjà payée trouvée pour ${locataire.prenom} ${locataire.nom}.`);
       const { bytes, fichier } = genererQuittancePdf(dernier, data);
       telechargerPdf(bytes, fichier);
       const { note } = arrieresLocataire(data, locataire.id, dernier.id);
@@ -3789,7 +3813,7 @@ function VoiceAssistant({ data, setData, go, openPaie }) {
     }
 
     if (action === "ajouter_locataire") {
-      if (!(params.nom || "").trim() && !(params.prenom || "").trim()) return null;
+      if (!(params.nom || "").trim() && !(params.prenom || "").trim()) throw new Error("Nom ou prénom manquant pour créer le locataire.");
       setData((d) => {
         const vacant = d.locaux.find((l) => l.statut === "vacant");
         const locaux = vacant ? d.locaux.map((l) => l.id === vacant.id ? { ...l, statut: "loue" } : l) : d.locaux;
@@ -3804,12 +3828,14 @@ function VoiceAssistant({ data, setData, go, openPaie }) {
 
   const ask = async (userText) => {
     const clean = userText.trim(); if (!clean) return;
+    console.log("[Assistant] 1/5 Transcription reçue:", JSON.stringify(clean));
     setLog((l) => [...l, { role: "user", text: clean }]); setText(""); setThinking(true);
     const ctx = buildContext(data);
     const system = `Tu es l'assistant vocal de "DRAMÉ Gestion", une application de gestion locative en Guinée (monnaie : franc guinéen GNF).
+RÈGLE ABSOLUE : ta réponse complète doit être UN SEUL objet JSON valide, rien d'autre. Pas de "Voici le JSON", pas d'explication avant ou après, pas de balises markdown, pas de texte en dehors des accolades. Le tout premier caractère de ta réponse doit être { et le dernier doit être }.
 Contexte de paiement : le 5 de chaque mois est la date butoir. À l'échéance du 5, deux recouvrements ont lieu : le mois précédent pour les immeubles à "terme échu", et le mois courant pour les immeubles "en avance".
 Réponds en français, court et naturel (1-2 phrases). Les montants se disent en francs guinéens.
-Réponds UNIQUEMENT avec un JSON valide, sans texte ni balise : {"reponse":"<phrase>","action":"<action>","params":{}}
+Format exact, sans rien d'autre autour : {"reponse":"<phrase>","action":"<action>","params":{}}
 Actions disponibles :
 - "aucune" : répondre à une question avec les données fournies, sans agir.
 - "naviguer" {"vue":"dashboard|immeubles|locaux|locataires|paiements|recouvrement|retards|rappels|versements|recus|depenses|documents|rapports|parametres"}
@@ -3819,8 +3845,10 @@ Actions disponibles :
 - "creer_versement" {"mois":<optionnel, "AAAA-MM">} : crée le versement du cycle le plus ancien non encore fait, génère ET télécharge son reçu PDF, puis prépare son envoi WhatsApp au propriétaire.
 - "ajouter_locataire" {"prenom","nom","email","telephone"} : crée un locataire, l'assigne au premier local vacant trouvé.
 Si la demande ne correspond à aucune de ces actions, utilise "aucune" et explique brièvement dans "reponse" ce que tu ne peux pas encore faire — n'invente jamais une action qui n'est pas dans cette liste.
+RAPPEL : réponds SEULEMENT par l'objet JSON, rien avant, rien après.
 Données actuelles : ${JSON.stringify(ctx)}`;
     try {
+      console.log("[Assistant] 2/5 Envoi à l'IA (Gemini via fonction Netlify)…");
       const res = await fetch("/.netlify/functions/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system, message: clean }) });
       const d = await res.json().catch(() => null);
       if (!res.ok) {
@@ -3829,27 +3857,74 @@ Données actuelles : ${JSON.stringify(ctx)}`;
         // masquerait la cause réelle — d.error peut être une chaîne (nos propres erreurs) ou
         // un objet {message} (forme d'erreur Gemini/Google, renvoyée telle quelle).
         const detail = (typeof d?.error === "string" ? d.error : d?.error?.message) || `HTTP ${res.status}`;
+        console.error("[Assistant] ❌ Échec de la requête:", res.status, detail);
         throw new Error(detail);
       }
+      console.log("[Assistant] 3/5 Réponse IA reçue (brute):", d);
       // Forme de réponse Gemini (différente d'Anthropic) : candidates[0].content.parts[].text.
-      // responseMimeType:"application/json" côté fonction garantit déjà du JSON valide, mais on
-      // retire quand même d'éventuelles balises markdown par sécurité.
+      // responseMimeType:"application/json" et la consigne du prompt visent du JSON pur, mais on
+      // isole quand même le contenu entre la première { et la dernière } par sécurité — au cas où
+      // le modèle ajoute malgré tout un préambule ("Voici le JSON...") avant le vrai contenu.
       let raw = (d.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("\n").trim().replace(/```json/gi, "").replace(/```/g, "").trim();
-      let parsed; try { parsed = JSON.parse(raw); } catch { parsed = { reponse: raw || "Je n'ai pas compris, reformulez ?", action: "aucune", params: {} }; }
-      const rep = parsed.reponse || "C'est fait.";
+      const debut = raw.indexOf("{"), fin = raw.lastIndexOf("}");
+      const jsonTrouve = debut !== -1 && fin > debut;
+      if (jsonTrouve) raw = raw.slice(debut, fin + 1);
+      console.log("[Assistant] 4/5 Texte isolé pour parsing:", JSON.stringify(raw), "| JSON détecté:", jsonTrouve);
+      let parsed = null;
+      if (jsonTrouve) { try { parsed = JSON.parse(raw); } catch (e) { console.error("[Assistant] JSON invalide malgré des accolades détectées:", e.message); } }
+      if (!parsed || typeof parsed !== "object") {
+        // Mode de secours : si l'IA n'a produit AUCUN JSON exploitable, on ne montre JAMAIS son
+        // texte brut (ex. "Here is the JSON requested") à l'utilisateur — toujours un message
+        // générique et propre à la place. Le texte brut original reste visible dans les logs
+        // (ci-dessus) pour le diagnostic, mais jamais dans l'interface.
+        console.warn("[Assistant] ⚠️ Mode de secours activé — aucun JSON exploitable dans la réponse IA.");
+        parsed = { reponse: "Je n'ai pas bien compris votre demande. Pouvez-vous reformuler plus simplement ?", action: "aucune", params: {} };
+      }
+      let rep = parsed.reponse || "C'est fait.";
       let extra = null;
-      if (parsed.action && parsed.action !== "aucune") { try { extra = execute(parsed.action, parsed.params || {}); } catch {} }
+      if (parsed.action && parsed.action !== "aucune") {
+        console.log("[Assistant] 5/5 Exécution de l'action:", parsed.action, parsed.params || {});
+        try { extra = execute(parsed.action, parsed.params || {}); }
+        catch (e) {
+          // L'IA avait annoncé un succès ("Paiement enregistré...") avant même que l'action ne
+          // s'exécute réellement — si elle échoue (locataire introuvable, etc.), on ne doit
+          // JAMAIS laisser ce message optimiste s'afficher : on le remplace par la vraie raison.
+          console.error("[Assistant] ❌ Échec de l'exécution de l'action:", parsed.action, e);
+          rep = e.message || "Cette action n'a pas pu être effectuée.";
+        }
+      } else {
+        console.log("[Assistant] 5/5 Aucune action à exécuter (réponse informative seulement).");
+      }
       setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]); speak(rep);
-    } catch (e) { const m = `Connexion à l'assistant impossible : ${e.message || "erreur inconnue"}`; setLog((l) => [...l, { role: "ai", text: m }]); speak(m); }
+    } catch (e) {
+      console.error("[Assistant] ❌ Erreur de bout en bout:", e);
+      const m = `Connexion à l'assistant impossible : ${e.message || "erreur inconnue"}`;
+      setLog((l) => [...l, { role: "ai", text: m }]); speak(m);
+    }
     finally { setThinking(false); }
   };
 
   const startListen = () => {
-    if (!supported) return;
+    if (!supported) { console.warn("[Assistant] Reconnaissance vocale non supportée sur ce navigateur."); return; }
     const R = window.SpeechRecognition || window.webkitSpeechRecognition; const rec = new R();
     rec.lang = "fr-FR"; rec.interimResults = false; rec.maxAlternatives = 1;
-    rec.onresult = (e) => ask(e.results[0][0].transcript);
-    rec.onend = () => setListening(false); rec.onerror = () => setListening(false);
+    rec.onresult = (e) => { console.log("[Assistant] 0/5 Reconnaissance vocale — résultat brut:", e.results[0][0].transcript, "| confiance:", e.results[0][0].confidence); ask(e.results[0][0].transcript); };
+    rec.onend = () => setListening(false);
+    rec.onerror = (e) => {
+      setListening(false);
+      // Messages clairs selon la cause réelle, plutôt qu'un échec silencieux — l'utilisateur sait
+      // au moins s'il doit autoriser le micro, reformuler, ou vérifier sa connexion.
+      const messages = {
+        "not-allowed": "Micro refusé — autorisez l'accès au micro dans les réglages du navigateur.",
+        "no-speech": "Aucune parole détectée, réessayez.",
+        "audio-capture": "Aucun micro trouvé sur cet appareil.",
+        "network": "Problème réseau pendant la reconnaissance vocale.",
+        "aborted": null, // l'utilisateur a arrêté volontairement — pas une erreur à afficher
+      };
+      console.error("[Assistant] Erreur de reconnaissance vocale:", e.error);
+      const m = messages[e.error];
+      if (m !== null) { const msg = m || `Reconnaissance vocale indisponible (${e.error}).`; setLog((l) => [...l, { role: "ai", text: msg }]); }
+    };
     recRef.current = rec; setListening(true); rec.start();
   };
   const stopListen = () => { recRef.current?.stop(); setListening(false); };
