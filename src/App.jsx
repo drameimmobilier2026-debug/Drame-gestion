@@ -994,7 +994,7 @@ function Immeubles({ data, setData, go }) {
               ) : (
                 <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
                   <span className="flex items-center gap-1 text-xs font-medium text-teal-700 transition">Ouvrir <ChevronRight size={13} /></span>
-                  <div className="flex gap-1 transition">
+                  <div className="flex gap-1">
                     <button onClick={() => open(im)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
                     <button onClick={() => setConfirmDel(im.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
                   </div>
@@ -1123,7 +1123,7 @@ function Locaux({ data, setData, go }) {
         {list.map((l) => {
           const t = occupant(l.id);
           return (
-            <div key={l.id} className="group rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm transition hover:shadow-md">
+            <div key={l.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-5">
               <button onClick={() => go("local", l.id)} className="block w-full text-left">
                 <div className="flex items-start justify-between">
                   <div className="rounded-xl bg-slate-100 p-2.5"><DoorOpen size={20} className="text-slate-500" /></div>
@@ -1140,7 +1140,7 @@ function Locaux({ data, setData, go }) {
               </button>
               <div className="mt-4 flex items-end justify-between border-t border-slate-100 pt-3">
                 <span className="font-display text-lg font-semibold tabular-nums text-slate-900">{money(l.loyer + (l.charges || 0))}</span>
-                <div className="flex gap-1 transition">
+                <div className="flex gap-1">
                   <button onClick={() => open(l)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
                   <button onClick={() => del(l.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
                 </div>
@@ -1289,7 +1289,7 @@ function Locataires({ data, setData, go }) {
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {liste.map((t) => (
-          <div key={t.id} className="rounded-2xl border border-slate-200/70 bg-white p-5">
+          <div key={t.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-5">
             <button onClick={() => go("locataire", t.id)} className="block w-full text-left">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-full bg-teal-600 font-display text-sm font-semibold text-white">{initials(t)}</div>
@@ -1350,6 +1350,7 @@ function LocataireDetail({ id, data, setData, go }) {
   const [avanceOpen, setAvanceOpen] = useState(false);
   const [nbMoisAvance, setNbMoisAvance] = useState(1);
   const [ajoutAuCycleLoc, setAjoutAuCycleLoc] = useState(false); // Oui/Non — voir enregistrerAvance
+  const [dateAvanceLoc, setDateAvanceLoc] = useState(new Date().toISOString().slice(0, 10)); // jour où l'avance a été remise
   // Enregistre plusieurs mois d'avance en une fois (ex: un locataire paie juillet + août +
   // septembre le même jour) — crée ou met à jour chaque mois individuellement, payé aujourd'hui.
   // Si ajoutAuCycleLoc, tous ces mois sont rattachés (verseAvec) au cycle de versement en cours
@@ -1362,7 +1363,7 @@ function LocataireDetail({ id, data, setData, go }) {
       for (let i = 0; i < n; i++) {
         const mois = shiftMonth(infoActuel.mois, i);
         const idx = paiements.findIndex((p) => p.localId === l.id && p.mois === mois);
-        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + (l.charges || 0), statut: "paye", datePaiement: new Date().toISOString().slice(0, 10), verseAvec: ajoutAuCycleLoc ? curMonth : null, avanceNonImputee: ajoutAuCycleLoc ? false : true, saisiPendantCycle: curMonth };
+        const rec = { id: idx >= 0 ? paiements[idx].id : uid(), localId: l.id, immeubleId: l.immeubleId, locataireId: t.id, mois, montant: l.loyer + (l.charges || 0), statut: "paye", datePaiement: dateAvanceLoc, verseAvec: ajoutAuCycleLoc ? curMonth : null, avanceNonImputee: ajoutAuCycleLoc ? false : true, saisiPendantCycle: curMonth };
         if (idx >= 0) paiements[idx] = rec; else paiements.push(rec);
       }
       return { ...d, paiements };
@@ -1370,6 +1371,7 @@ function LocataireDetail({ id, data, setData, go }) {
     setAvanceOpen(false);
     setNbMoisAvance(1);
     setAjoutAuCycleLoc(false);
+    setDateAvanceLoc(new Date().toISOString().slice(0, 10));
   };
 
   const del = () => { delLocataire(setData, id); go("locataires"); };
@@ -1544,6 +1546,10 @@ function LocataireDetail({ id, data, setData, go }) {
         {infoActuel && (
           <div className="space-y-4">
             <p className="text-sm text-slate-500">Enregistre plusieurs mois d'un coup pour <span className="font-semibold text-slate-700">{t.prenom} {t.nom}</span>, à partir de <span className="font-semibold text-slate-700">{cap(moisNom(infoActuel.mois))} {infoActuel.mois.slice(0, 4)}</span>.</p>
+            <Field label="Date de réception de l'avance">
+              <DateField value={dateAvanceLoc} onChange={(e) => setDateAvanceLoc(e.target.value)} />
+              <p className="mt-1.5 text-xs text-slate-400">Le jour où le locataire vous a remis cette avance — pas forcément aujourd'hui.</p>
+            </Field>
             <Field label="Mois payés d'avance">
               <div className="flex flex-wrap gap-1.5">
                 {Array.from({ length: 12 }, (_, i) => shiftMonth(infoActuel.mois, i)).map((m, i) => (
@@ -1984,6 +1990,10 @@ function Avances({ data, setData, go }) {
   const [locataireChoisi, setLocataireChoisi] = useState("");
   const [nbMoisAjout, setNbMoisAjout] = useState(2);
   const [ajoutAuCycle, setAjoutAuCycle] = useState(false); // Oui/Non — voir ajouterAvance ci-dessous
+  // Date à laquelle l'avance a réellement été remise par le locataire — pas forcément aujourd'hui
+  // (le gestionnaire peut saisir une avance reçue il y a quelques jours). Elle devient la
+  // datePaiement de chaque mois créé, et c'est donc elle qui figure sur les reçus et relevés.
+  const [dateAvance, setDateAvance] = useState(new Date().toISOString().slice(0, 10));
 
   // Tous les locataires occupant un local, pour le sélecteur d'ajout — n'importe lequel peut
   // recevoir une avance, qu'il en ait déjà une en cours ou non (elle sera simplement prolongée).
@@ -2021,7 +2031,7 @@ function Avances({ data, setData, go }) {
           id: idx >= 0 ? paiements[idx].id : uid(),
           localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois,
           montant: local.loyer + (local.charges || 0),
-          statut: "paye", datePaiement: new Date().toISOString().slice(0, 10),
+          statut: "paye", datePaiement: dateAvance,
           verseAvec: ajoutAuCycle ? curMonth : null,
           avanceNonImputee: ajoutAuCycle ? false : true,
           saisiPendantCycle: curMonth, // cycle où l'avance a été saisie — voir compteDansCycleCourant
@@ -2034,6 +2044,7 @@ function Avances({ data, setData, go }) {
     setLocataireChoisi("");
     setNbMoisAjout(2);
     setAjoutAuCycle(false);
+    setDateAvance(new Date().toISOString().slice(0, 10));
   };
 
   const avances = data.locaux.filter((l) => l.statut === "loue").map((l) => {
@@ -2194,7 +2205,7 @@ function Avances({ data, setData, go }) {
             const nv = AVANCE_NIVEAU_CLS[a.niveau];
             const tel = a.tenant.telephone;
             return (
-              <div key={a.tenant.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+              <div key={a.tenant.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <button onClick={() => go("locataire", a.tenant.id)} className="flex min-w-0 items-center gap-3 text-left">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-semibold text-white">{initials(a.tenant)}</div>
@@ -2291,6 +2302,10 @@ function Avances({ data, setData, go }) {
               <option value="">Choisir un locataire…</option>
               {locatairesOptions.map(({ local, tenant }) => <option key={tenant.id} value={tenant.id}>{nomT(tenant)} — {local.nom} ({imNom(local.immeubleId)})</option>)}
             </select>
+          </Field>
+          <Field label="Date de réception de l'avance">
+            <DateField value={dateAvance} onChange={(e) => setDateAvance(e.target.value)} />
+            <p className="mt-1.5 text-xs text-slate-400">Le jour où le locataire vous a remis cette avance — pas forcément aujourd'hui. Cette date figurera sur les reçus et relevés.</p>
           </Field>
           {locataireChoisi && (() => {
             const choix = locatairesOptions.find((x) => x.tenant.id === locataireChoisi);
@@ -2450,7 +2465,7 @@ function Arrieres({ data, go }) {
             const sv = SEVERITE_CLS[g.severite];
             const tel = data.locataires.find((x) => x.id === g.locataireId)?.telephone;
             return (
-              <div key={g.locataireId || g.localId} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+              <div key={g.locataireId || g.localId} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <button onClick={() => g.locataireId && go("locataire", g.locataireId)} className="flex min-w-0 items-center gap-3 text-left">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-rose-400 to-rose-600 text-xs font-semibold text-white">{initials(data.locataires.find((x) => x.id === g.locataireId) || { nom: "?" })}</div>
@@ -2747,9 +2762,15 @@ function genererVersementPdf(versement, data) {
     if (!g.immeuble) continue;
     const locauxImmeuble = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue");
     const nbAttenduIm = locauxImmeuble.length;
-    // Locaux occupés de cet immeuble n'ayant PAS payé ce cycle — liste séparée, jamais mélangée
-    // avec ceux qui ont payé : seuls les non-payeurs y figurent.
-    const nonPayes = locauxImmeuble.filter((l) => !g.items.some((x) => x.localId === l.id));
+    const moisDuIm = g.immeuble.mode === "avance" ? versement.mois : shiftMonth(versement.mois, -1);
+
+    // Un local absent des recouvrements de CE versement n'est pas forcément un impayé : son
+    // loyer peut être bel et bien réglé, mais volontairement non imputé à ce cycle (réponse
+    // "Non" lors de l'ajout d'une avance). Il ne doit alors JAMAIS apparaître comme retardataire.
+    const nonRecouvres = locauxImmeuble.filter((l) => !g.items.some((x) => x.localId === l.id));
+    const payesAilleurs = nonRecouvres.filter((l) => data.paiements.some((p) => p.localId === l.id && p.mois === moisDuIm && p.statut === "paye"));
+    const nonPayes = nonRecouvres.filter((l) => !payesAilleurs.includes(l));
+
     const modeLabel = g.immeuble.mode === "avance" ? "Terme en avance" : "Terme échu";
     const moisLabel = g.immeuble.mode === "avance" ? moisNom(versement.mois) : moisNom(shiftMonth(versement.mois, -1));
 
@@ -2769,6 +2790,22 @@ function genererVersementPdf(versement, data) {
         else if (estPayeDavance(x)) ops.push({ type: "text", x: 58 + Math.min(180, nom(x.locataireId).length * 5 + 6), y, size: 7, font: "R", color: [0.05, 0.35, 0.45], text: "(payé à l'avance)" });
         ops.push({ type: "text", x: 280, y, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: localNom(x.localId) });
         ops.push({ type: "text", x: 460, y, size: 9, font: "R", color: [0.1, 0.1, 0.1], text: money(x.montant) });
+        y -= 15;
+      }
+    }
+
+    // Payés à l'avance, mais volontairement non imputés à ce cycle : à titre INDICATIF, pour que
+    // le propriétaire sache que ces loyers sont bel et bien réglés — et surtout, pour qu'ils ne
+    // soient jamais confondus avec de vrais impayés.
+    if (payesAilleurs.length > 0) {
+      y -= 4;
+      ops.push({ type: "text", x: 58, y, size: 8, font: "B", color: [0.05, 0.35, 0.45], text: `Payé à l'avance — non imputé à ce versement (${payesAilleurs.length}) :` });
+      y -= 14;
+      for (const l of payesAilleurs) {
+        const t = data.locataires.find((tt) => tt.localId === l.id);
+        ops.push({ type: "text", x: 58, y, size: 9, font: "R", color: [0.1, 0.4, 0.5], text: t ? `${t.prenom} ${t.nom}` : "—" });
+        ops.push({ type: "text", x: 280, y, size: 9, font: "R", color: [0.35, 0.55, 0.6], text: l.nom });
+        ops.push({ type: "text", x: 460, y, size: 9, font: "R", color: [0.1, 0.4, 0.5], text: money(l.loyer + (l.charges || 0)) });
         y -= 15;
       }
     }
@@ -2884,8 +2921,13 @@ function VersementRecuModal({ versement, data, onClose }) {
                 {groupesImmeubles.map((g) => {
                   const locauxImmeuble = data.locaux.filter((l) => l.immeubleId === g.immeuble.id && l.statut === "loue");
                   const nbAttenduIm = locauxImmeuble.length;
-                  // Seuls les locaux occupés SANS paiement ce cycle — jamais mélangés avec ceux qui ont payé.
-                  const nonPayes = locauxImmeuble.filter((l) => !g.items.some((x) => x.localId === l.id));
+                  const moisDuIm = g.immeuble.mode === "avance" ? versement.mois : shiftMonth(versement.mois, -1);
+                  // Un local absent des recouvrements de CE versement n'est pas forcément un impayé :
+                  // son loyer peut être réglé mais volontairement non imputé à ce cycle (réponse "Non"
+                  // lors de l'ajout d'une avance). Il ne doit alors JAMAIS apparaître comme retardataire.
+                  const nonRecouvres = locauxImmeuble.filter((l) => !g.items.some((x) => x.localId === l.id));
+                  const payesAilleurs = nonRecouvres.filter((l) => data.paiements.some((p) => p.localId === l.id && p.mois === moisDuIm && p.statut === "paye"));
+                  const nonPayes = nonRecouvres.filter((l) => !payesAilleurs.includes(l));
                   const modeLabel = g.immeuble.mode === "avance" ? "Terme en avance" : "Terme échu";
                   const moisLabel = g.immeuble.mode === "avance" ? moisNom(versement.mois) : moisNom(shiftMonth(versement.mois, -1));
                   const complet = g.items.length === nbAttenduIm && nbAttenduIm > 0;
@@ -2908,6 +2950,17 @@ function VersementRecuModal({ versement, data, onClose }) {
                           {g.items.map((x) => (
                             <div key={x.id} className="flex items-center justify-between px-4 py-2 text-sm"><span className="min-w-0 truncate text-slate-700">{nom(x.locataireId)} <span className="text-slate-400">· {localNom(x.localId)}</span>{x.verseAvec ? <span className="ml-1.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">avance ajoutée à ce versement</span> : estPayeDavance(x) && <span className="ml-1.5 rounded bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700">payé à l'avance</span>}</span><span className="shrink-0 font-medium tabular-nums text-slate-900">{money(x.montant)}</span></div>
                           ))}
+                        </div>
+                      )}
+                      {payesAilleurs.length > 0 && (
+                        <div className="border-t border-cyan-100 bg-cyan-50/50">
+                          <p className="px-4 pt-2 text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Payé à l'avance — non imputé à ce versement ({payesAilleurs.length})</p>
+                          <div className="divide-y divide-cyan-100/70 pb-1">
+                            {payesAilleurs.map((l) => {
+                              const t = data.locataires.find((tt) => tt.localId === l.id);
+                              return <div key={l.id} className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="min-w-0 truncate text-cyan-800">{t ? `${t.prenom} ${t.nom}` : "—"} <span className="text-cyan-500">· {l.nom}</span></span><span className="shrink-0 font-medium tabular-nums text-cyan-700">{money(l.loyer + (l.charges || 0))}</span></div>;
+                            })}
+                          </div>
                         </div>
                       )}
                       {nonPayes.length > 0 && (
@@ -3022,7 +3075,7 @@ function Versements({ data, setData, go }) {
       ) : (
         <div className="space-y-3">
           {versementsCalcules.map(({ v, c }) => (
-            <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+            <div key={v.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
@@ -3331,7 +3384,7 @@ function MesCommissions({ data, setData, go, isDark }) {
         ) : (
           <div className="space-y-3">
             {lignesAffichees.map(({ v, c }) => (
-              <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+              <div key={v.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
@@ -4262,7 +4315,7 @@ Données actuelles : ${JSON.stringify(ctx)}`;
           </div>
         </>
       )}
-      <button onClick={() => setOpen((o) => !o)} className="fixed bottom-6 right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white shadow-lg transition hover:scale-105 sm:right-6">
+      <button onClick={() => setOpen((o) => !o)} className="fixed bottom-6 right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white sm:right-6">
         {listening ? <Mic size={22} className="relative" /> : <Sparkles size={22} className="relative" />}
       </button>
     </>
@@ -4664,6 +4717,45 @@ function FontStyles() {
        Le débordement horizontal est déjà maîtrisé proprement au niveau de la mise en page
        (min-w-0, truncate, overflow-x-auto sur les tableaux), sans toucher au défilement. */
     html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+
+    /* ===== Cartes de liste : ne dessiner que ce qui est visible =====
+       Les listes (locataires, locaux…) empilent une quinzaine de cartes, soit des pages de
+       plusieurs milliers de pixels de haut. Le navigateur les découpe en tuiles pour les
+       dessiner ; sur les GPU les plus modestes, certaines tuiles échouent et affichent de la
+       mémoire non initialisée — ce sont les bandes de "bruit" observées.
+
+       content-visibility:auto demande au navigateur de NE PAS dessiner les cartes situées hors
+       de l'écran. Le travail de rasterisation est divisé par cinq ou plus, ce qui supprime la
+       cause du problème plutôt que d'en masquer les effets. contain-intrinsic-size réserve la
+       hauteur approximative de chaque carte, pour que la barre de défilement reste stable et
+       que la page ne "saute" pas pendant le défilement. */
+    .carte-liste{content-visibility:auto;contain-intrinsic-size:auto 220px}
+
+    /* ═════════ MODE DE RENDU SÉCURISÉ (appareils tactiles) ═════════
+       Sur téléphone — et particulièrement sur les GPU Android modestes — chaque ombre portée,
+       chaque transition, chaque animation et chaque élément "collant" crée une couche de
+       composition que le navigateur doit ré-assembler à CHAQUE image pendant le défilement.
+       L'effet est cumulatif : passé un certain seuil, le navigateur n'arrive plus à dessiner
+       toutes les tuiles à temps, et celles qui échouent affichent de la mémoire non
+       initialisée — ce sont les bandes de "bruit" multicolores observées.
+
+       On désactive donc entièrement ces effets décoratifs sur tactile. L'application garde
+       exactement la même apparence utile (couleurs, bordures, mise en page, lisibilité) mais
+       devient radicalement plus légère à dessiner. Sur ordinateur, tous les effets restent.
+
+       C'est une désactivation AUTOMATIQUE : aucun réglage à faire, aucun risque d'oubli, et
+       tout nouvel effet ajouté plus tard sera lui aussi neutralisé sur mobile. */
+    @media (hover: none) and (pointer: coarse) {
+      *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+        box-shadow: none !important;
+      }
+      /* L'en-tête cesse d'être collant : il défile avec la page. Cela supprime une couche de
+         composition en permanence superposée au contenu qui défile — l'un des déclencheurs
+         les plus directs de ce type de déchirure sur Android. */
+      header { position: static !important; }
+    }
 
     /* ===================== Mode sombre =====================
        Implémenté en CSS "maison" (pas via le variant dark: de Tailwind,
