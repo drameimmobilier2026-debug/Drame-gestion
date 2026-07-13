@@ -1123,7 +1123,7 @@ function Locaux({ data, setData, go }) {
         {list.map((l) => {
           const t = occupant(l.id);
           return (
-            <div key={l.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-5">
+            <div key={l.id} className="rounded-2xl border border-slate-200/70 bg-white p-5">
               <button onClick={() => go("local", l.id)} className="block w-full text-left">
                 <div className="flex items-start justify-between">
                   <div className="rounded-xl bg-slate-100 p-2.5"><DoorOpen size={20} className="text-slate-500" /></div>
@@ -1289,7 +1289,7 @@ function Locataires({ data, setData, go }) {
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {liste.map((t) => (
-          <div key={t.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-5">
+          <div key={t.id} className="rounded-2xl border border-slate-200/70 bg-white p-5">
             <button onClick={() => go("locataire", t.id)} className="block w-full text-left">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-full bg-teal-600 font-display text-sm font-semibold text-white">{initials(t)}</div>
@@ -2205,7 +2205,7 @@ function Avances({ data, setData, go }) {
             const nv = AVANCE_NIVEAU_CLS[a.niveau];
             const tel = a.tenant.telephone;
             return (
-              <div key={a.tenant.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
+              <div key={a.tenant.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <button onClick={() => go("locataire", a.tenant.id)} className="flex min-w-0 items-center gap-3 text-left">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-semibold text-white">{initials(a.tenant)}</div>
@@ -2356,7 +2356,7 @@ const SEVERITE_CLS = {
   modere: { badge: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20", dot: "bg-orange-500", label: "Modéré" },
   severe: { badge: "bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/20", dot: "bg-rose-500", label: "Sévère" },
 };
-function Arrieres({ data, go }) {
+function Arrieres({ data, setData, go }) {
   const modeOf = (id) => data.immeubles.find((i) => i.id === id)?.mode;
   const nom = (id) => { const l = data.locataires.find((x) => x.id === id); return l ? `${l.prenom} ${l.nom}` : "—"; };
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom || "—";
@@ -2364,6 +2364,41 @@ function Arrieres({ data, go }) {
   const societe = data.parametres?.societe || "DRAMÉ Gestion";
   const [tri, setTri] = useState("montant");
   const [releve, setReleve] = useState(null);
+  // null = tous ; "severe" = uniquement les cas de 3 mois ou plus. Piloté par les cartes ci-dessous.
+  const [filtreSeverite, setFiltreSeverite] = useState(null);
+  const [ajoutOpen, setAjoutOpen] = useState(false);
+
+  // Enregistrement d'un arriéré ANCIEN : une dette contractée avant que l'application ne soit
+  // utilisée, et qui n'a donc jamais donné lieu à une ligne de paiement. On la matérialise par
+  // un vrai paiement impayé, exactement comme les autres — il rejoint ainsi automatiquement les
+  // arriérés, les retards, les rappels et les relevés, sans aucun traitement particulier.
+  const locatairesOptions = data.locaux
+    .filter((l) => l.statut === "loue")
+    .map((l) => ({ local: l, tenant: data.locataires.find((t) => t.localId === l.id) }))
+    .filter((x) => x.tenant)
+    .sort((a, b) => `${a.tenant.prenom} ${a.tenant.nom}`.localeCompare(`${b.tenant.prenom} ${b.tenant.nom}`));
+
+  const [ancienLocataire, setAncienLocataire] = useState("");
+  const [ancienMois, setAncienMois] = useState(shiftMonth(curMonth, -1));
+  const [ancienMontant, setAncienMontant] = useState("");
+
+  const enregistrerAncienArriere = () => {
+    const choix = locatairesOptions.find((x) => x.tenant.id === ancienLocataire);
+    if (!choix) return;
+    const { local, tenant } = choix;
+    const montant = +ancienMontant || local.loyer + (local.charges || 0);
+    setData((d) => {
+      // Si une ligne existe déjà pour ce local et ce mois, on la met à jour plutôt que d'en créer
+      // une seconde — jamais de doublon, quel que soit le nombre de saisies.
+      const idx = d.paiements.findIndex((p) => p.localId === local.id && p.mois === ancienMois);
+      const rec = { id: idx >= 0 ? d.paiements[idx].id : uid(), localId: local.id, immeubleId: local.immeubleId, locataireId: tenant.id, mois: ancienMois, montant, statut: "en_retard", datePaiement: null, arriereAncien: true };
+      const paiements = idx >= 0 ? d.paiements.map((p, i) => (i === idx ? rec : p)) : [...d.paiements, rec];
+      return { ...d, paiements };
+    });
+    setAjoutOpen(false);
+    setAncienLocataire("");
+    setAncienMontant("");
+  };
 
   // Même portée de données que "Retards" (tous les impayés jusqu'au cycle courant inclus),
   // mais regroupée et enrichie pour une lecture analytique plutôt qu'orientée action immédiate.
@@ -2391,8 +2426,11 @@ function Arrieres({ data, go }) {
   });
   groupes = groupes.sort((a, b) => (tri === "mois" ? b.nbMois - a.nbMois : tri === "anciennete" ? b.ancienneteMois - a.ancienneteMois : b.total - a.total));
 
+  // Statistiques TOUJOURS globales (jamais filtrées) : elles décrivent la situation réelle,
+  // pas la vue en cours. Seule la liste ci-dessous se filtre au clic sur une carte.
   const totalGeneral = impayes.reduce((s, p) => s + p.montant, 0);
   const severes = groupes.filter((g) => g.severite === "severe").length;
+  const groupesAffiches = filtreSeverite === "severe" ? groupes.filter((g) => g.severite === "severe") : groupes;
 
   const messagePour = (g) => {
     const moisTexte = g.lignes.map((p) => `${cap(moisNom(p.mois))} ${p.mois.slice(0, 4)}`).join(", ");
@@ -2434,18 +2472,26 @@ function Arrieres({ data, go }) {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+        <button onClick={() => setFiltreSeverite(null)} className={`rounded-2xl border border-slate-200/70 bg-white p-5 text-left shadow-sm hover:bg-slate-50 ${filtreSeverite === null ? "ring-2 ring-rose-400 ring-offset-1" : ""}`}>
           <div className="text-xs font-medium text-slate-500">Locataires concernés</div>
           <div className="mt-2 font-display text-2xl font-semibold text-rose-600">{groupes.length}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
+          <div className="mt-0.5 text-[11px] text-slate-400">voir tous →</div>
+        </button>
+        <button onClick={() => setFiltreSeverite(filtreSeverite === "severe" ? null : "severe")} className={`rounded-2xl border border-slate-200/70 bg-white p-5 text-left shadow-sm hover:bg-slate-50 ${filtreSeverite === "severe" ? "ring-2 ring-rose-400 ring-offset-1" : ""}`}>
           <div className="text-xs font-medium text-slate-500">Cas sévères (3+ mois)</div>
           <div className="mt-2 font-display text-2xl font-semibold text-rose-600">{severes}</div>
-        </div>
-        <div className="col-span-2 rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm sm:col-span-1">
+          <div className="mt-0.5 text-[11px] text-slate-400">{filtreSeverite === "severe" ? "filtre actif ×" : "filtrer →"}</div>
+        </button>
+        <button onClick={() => go("retards")} className="col-span-2 rounded-2xl border border-slate-200/70 bg-white p-5 text-left shadow-sm hover:bg-slate-50 sm:col-span-1">
           <div className="text-xs font-medium text-slate-500">Total des arriérés</div>
           <div className="mt-2 font-display text-2xl font-semibold tabular-nums text-rose-600">{moneyC(totalGeneral)}</div>
-        </div>
+          <div className="mt-0.5 text-[11px] text-slate-400">encaisser dans Retards →</div>
+        </button>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">{groupesAffiches.length} locataire(s) affiché(s){filtreSeverite === "severe" ? " · cas sévères uniquement" : ""}</p>
+        <button onClick={() => setAjoutOpen(true)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-teal-800"><Plus size={15} /> Enregistrer un ancien arriéré</button>
       </div>
 
       {groupes.length > 0 && (
@@ -2457,15 +2503,15 @@ function Arrieres({ data, go }) {
         </div>
       )}
 
-      {groupes.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-12 text-center text-sm text-slate-400 shadow-sm">Aucun arriéré. 🎉</div>
+      {groupesAffiches.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200/70 bg-white px-5 py-12 text-center text-sm text-slate-400 shadow-sm">{groupes.length === 0 ? "Aucun arriéré. 🎉" : "Aucun cas sévère."}</div>
       ) : (
         <div className="space-y-3">
-          {groupes.map((g) => {
+          {groupesAffiches.map((g) => {
             const sv = SEVERITE_CLS[g.severite];
             const tel = data.locataires.find((x) => x.id === g.locataireId)?.telephone;
             return (
-              <div key={g.locataireId || g.localId} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
+              <div key={g.locataireId || g.localId} className="rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <button onClick={() => g.locataireId && go("locataire", g.locataireId)} className="flex min-w-0 items-center gap-3 text-left">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-rose-400 to-rose-600 text-xs font-semibold text-white">{initials(data.locataires.find((x) => x.id === g.locataireId) || { nom: "?" })}</div>
@@ -2543,6 +2589,36 @@ function Arrieres({ data, go }) {
             </div>
           );
         })()}
+      </Modal>
+
+      <Modal open={ajoutOpen} onClose={() => setAjoutOpen(false)} title="Enregistrer un ancien arriéré">
+        <div className="space-y-4">
+          <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">Pour inscrire une dette antérieure à votre utilisation de l'application. Elle sera enregistrée comme un loyer impayé et suivie exactement comme les autres : arriérés, retards, rappels et relevés.</p>
+          <Field label="Locataire">
+            <select className={inputCls} value={ancienLocataire} onChange={(e) => setAncienLocataire(e.target.value)}>
+              <option value="">Choisir un locataire…</option>
+              {locatairesOptions.map(({ local, tenant }) => <option key={tenant.id} value={tenant.id}>{tenant.prenom} {tenant.nom} — {local.nom} ({imNom(local.immeubleId)})</option>)}
+            </select>
+          </Field>
+          <Field label="Mois impayé">
+            <select className={inputCls} value={ancienMois} onChange={(e) => setAncienMois(e.target.value)}>
+              {Array.from({ length: 36 }, (_, i) => shiftMonth(curMonth, -(i + 1))).map((m) => <option key={m} value={m}>{cap(moisNom(m))} {m.slice(0, 4)}</option>)}
+            </select>
+            <p className="mt-1.5 text-xs text-slate-400">Jusqu'à 3 ans en arrière.</p>
+          </Field>
+          {ancienLocataire && (() => {
+            const choix = locatairesOptions.find((x) => x.tenant.id === ancienLocataire);
+            if (!choix) return null;
+            const loyerHabituel = choix.local.loyer + (choix.local.charges || 0);
+            return (
+              <Field label="Montant dû (GNF)">
+                <input type="number" inputMode="numeric" min="0" className={inputCls} value={ancienMontant} onChange={(e) => setAncienMontant(e.target.value)} placeholder={String(loyerHabituel)} />
+                <p className="mt-1.5 text-xs text-slate-400">Laissez vide pour reprendre le loyer habituel de ce local : {money(loyerHabituel)}.</p>
+              </Field>
+            );
+          })()}
+        </div>
+        <div className="mt-6 flex justify-end gap-2"><GhostBtn onClick={() => setAjoutOpen(false)}>Annuler</GhostBtn><PrimaryBtn onClick={enregistrerAncienArriere} disabled={!ancienLocataire}>Enregistrer</PrimaryBtn></div>
       </Modal>
     </div>
   );
@@ -3075,7 +3151,7 @@ function Versements({ data, setData, go }) {
       ) : (
         <div className="space-y-3">
           {versementsCalcules.map(({ v, c }) => (
-            <div key={v.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
+            <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
@@ -3384,7 +3460,7 @@ function MesCommissions({ data, setData, go, isDark }) {
         ) : (
           <div className="space-y-3">
             {lignesAffichees.map(({ v, c }) => (
-              <div key={v.id} className="carte-liste rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
+              <div key={v.id} className="rounded-2xl border border-slate-200/70 bg-white p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-display text-base font-semibold text-slate-900">{cap(moisNom(v.mois))} {v.mois.slice(0, 4)}</p>
@@ -4016,6 +4092,13 @@ function buildContext(data) {
 }
 function VoiceAssistant({ data, setData, go, openPaie }) {
   const [open, setOpen] = useState(false);
+  // Sur mobile, le bouton flottant est masqué (il créait une couche GPU permanente) : l'assistant
+  // s'ouvre alors depuis l'en-tête, qui déclenche cet événement.
+  useEffect(() => {
+    const basculer = () => setOpen((o) => !o);
+    window.addEventListener("drame:assistant", basculer);
+    return () => window.removeEventListener("drame:assistant", basculer);
+  }, []);
   const [listening, setListening] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
@@ -4315,7 +4398,11 @@ Données actuelles : ${JSON.stringify(ctx)}`;
           </div>
         </>
       )}
-      <button onClick={() => setOpen((o) => !o)} className="fixed bottom-6 right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white sm:right-6">
+      {/* Sur tactile, ce bouton flottant est masqué (voir le CSS) : position:fixed crée par nature
+          une couche de composition qui reste EN PERMANENCE superposée au contenu qui défile —
+          c'est le dernier élément de ce type dans l'application, et donc un déclencheur direct des
+          déchirures observées sur Android. Sur mobile, l'assistant s'ouvre depuis l'en-tête. */}
+      <button onClick={() => setOpen((o) => !o)} className="btn-assistant-flottant fixed bottom-6 right-4 z-40 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white sm:right-6">
         {listening ? <Mic size={22} className="relative" /> : <Sparkles size={22} className="relative" />}
       </button>
     </>
@@ -4662,6 +4749,9 @@ export default function App() {
         <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3.5 lg:px-8">
           <button onClick={() => setDrawer(true)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden"><Menu size={20} /></button>
           <div className="min-w-0 flex-1"><h1 className="truncate font-display text-lg font-semibold text-slate-900 lg:text-xl">{TITLES[nav.view]}</h1><p className="hidden text-xs text-slate-400 sm:block">{now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p></div>
+          <button onClick={() => window.dispatchEvent(new Event("drame:assistant"))} title="Assistant vocal" className="btn-assistant-header shrink-0 items-center justify-center rounded-lg bg-violet-600 p-2 text-white">
+            <Sparkles size={18} />
+          </button>
           <GlobalSearch data={data} go={go} />
         </header>
         <main className="p-4 lg:p-8">
@@ -4676,7 +4766,7 @@ export default function App() {
           {nav.view === "paiements" && <Paiements data={data} setData={setData} go={go} filter={paie} setFilter={setPaie} />}
           {nav.view === "recouvrement" && <Recouvrement data={data} go={go} openPaie={openPaie} />}
           {nav.view === "retards" && <Retards data={data} setData={setData} go={go} />}
-          {nav.view === "arrieres" && <Arrieres data={data} go={go} />}
+          {nav.view === "arrieres" && <Arrieres data={data} setData={setData} go={go} />}
           {nav.view === "avances" && <Avances data={data} setData={setData} go={go} />}
           {nav.view === "rappels" && <Rappels data={data} setData={setData} go={go} />}
           {nav.view === "versements" && <Versements data={data} setData={setData} go={go} />}
@@ -4718,18 +4808,10 @@ function FontStyles() {
        (min-w-0, truncate, overflow-x-auto sur les tableaux), sans toucher au défilement. */
     html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 
-    /* ===== Cartes de liste : ne dessiner que ce qui est visible =====
-       Les listes (locataires, locaux…) empilent une quinzaine de cartes, soit des pages de
-       plusieurs milliers de pixels de haut. Le navigateur les découpe en tuiles pour les
-       dessiner ; sur les GPU les plus modestes, certaines tuiles échouent et affichent de la
-       mémoire non initialisée — ce sont les bandes de "bruit" observées.
 
-       content-visibility:auto demande au navigateur de NE PAS dessiner les cartes situées hors
-       de l'écran. Le travail de rasterisation est divisé par cinq ou plus, ce qui supprime la
-       cause du problème plutôt que d'en masquer les effets. contain-intrinsic-size réserve la
-       hauteur approximative de chaque carte, pour que la barre de défilement reste stable et
-       que la page ne "saute" pas pendant le défilement. */
-    .carte-liste{content-visibility:auto;contain-intrinsic-size:auto 220px}
+    /* Le bouton d'assistant dans l'en-tête n'existe que sur tactile ; sur ordinateur, c'est le
+       bouton flottant qui sert (et qui n'y pose aucun problème de rendu). */
+    .btn-assistant-header{display:none}
 
     /* ═════════ MODE DE RENDU SÉCURISÉ (appareils tactiles) ═════════
        Sur téléphone — et particulièrement sur les GPU Android modestes — chaque ombre portée,
@@ -4755,6 +4837,14 @@ function FontStyles() {
          composition en permanence superposée au contenu qui défile — l'un des déclencheurs
          les plus directs de ce type de déchirure sur Android. */
       header { position: static !important; }
+
+      /* Le bouton flottant (position:fixed) est le DERNIER élément qui reste superposé en
+         permanence au contenu défilant. On le masque sur tactile : l'assistant reste
+         accessible depuis l'en-tête. Résultat : pendant le défilement, plus AUCUNE couche de
+         composition ne se superpose au contenu — le navigateur n'a plus qu'un seul plan à
+         dessiner, ce qui élimine à la racine la cause des déchirures. */
+      .btn-assistant-flottant { display: none !important; }
+      .btn-assistant-header { display: inline-flex !important; }
     }
 
     /* ===================== Mode sombre =====================
