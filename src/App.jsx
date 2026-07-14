@@ -846,7 +846,7 @@ function QuittanceModal({ paiement, data, onClose, go }) {
         const signatureComplete = signatureGestionnaireComplete(data);
         // Autres loyers impayés de ce même locataire (arriérés), à part le paiement de cette quittance.
         const { lignes: arrieres, total: totalArrieres, mois: moisArrieres, note: noteArrieres } = arrieresLocataire(data, paiement.locataireId, paiement.id);
-        const message = `Bonjour ${nom(paiement.locataireId)}, voici la confirmation de réception de votre loyer pour ${moisLong(paiement.mois)} : ${money(paiement.montant)} (local ${localNom(paiement.localId)}), payé le ${paiement.datePaiement}.${noteArrieres} Merci ! — ${signature}`;
+        const message = `Bonjour ${nom(paiement.locataireId)}, voici la confirmation de réception de votre loyer pour ${moisLong(paiement.mois)} : ${money(paiement.montant)} (local ${localNom(paiement.localId)}), payé le ${paiement.datePaiement}.${noteArrieres} Merci ! — ${signatureComplete.nom}`;
         const { bytes: pdfBytes, fichier, ref } = genererQuittancePdf(paiement, data);
         return (
           <div>
@@ -4200,7 +4200,20 @@ function VoiceAssistant({ data, setData, go, openPaie }) {
   useBackClose(open, () => setOpen(false));
   useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [log, thinking]);
 
-  const speak = (t) => { if (!voiceOn || !window.speechSynthesis) return; try { const u = new SpeechSynthesisUtterance(t); u.lang = "fr-FR"; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch {} };
+  // onFin (optionnel) : appelé une fois la phrase terminée — ou immédiatement si la voix est
+  // coupée/indisponible, pour ne jamais laisser un appelant bloqué en attente d'un événement
+  // qui ne se produira pas. Sert notamment à fermer le panneau une fois la confirmation dite,
+  // sans jamais couper la voix au milieu d'une phrase.
+  const speak = (t, onFin) => {
+    if (!voiceOn || !window.speechSynthesis) { onFin?.(); return; }
+    try {
+      const u = new SpeechSynthesisUtterance(t);
+      u.lang = "fr-FR";
+      if (onFin) { u.onend = onFin; u.onerror = onFin; }
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch { onFin?.(); }
+  };
 
   const execute = (action, params = {}) => {
     const vueMap = { dashboard: "dashboard", tableau: "dashboard", immeubles: "immeubles", immeuble: "immeubles", locaux: "locaux", local: "locaux", locataires: "locataires", locataire: "locataires", paiements: "paiements", loyers: "paiements", recouvrement: "recouvrement", recouvrements: "recouvrement", retards: "retards", retard: "retards", "en retard": "retards", impayes: "retards", "impayés": "retards", rappels: "rappels", rappel: "rappels", versements: "versements", versement: "versements", recus: "recus", "reçus": "recus", "reçu": "recus", quittance: "recus", quittances: "recus", depenses: "depenses", "dépenses": "depenses", charges: "depenses", documents: "documents", document: "documents", rapports: "rapports", rapport: "rapports", parametres: "parametres", "paramètres": "parametres", reglages: "parametres" };
@@ -4320,12 +4333,20 @@ function VoiceAssistant({ data, setData, go, openPaie }) {
       console.log("[Assistant] ⚡ Reconnu localement (sans réseau):", intentionLocale.action, intentionLocale.params);
       let rep = intentionLocale.reponse;
       let extra = null;
-      try { extra = execute(intentionLocale.action, intentionLocale.params || {}); }
-      catch (e) {
-        console.error("[Assistant] ❌ Échec de l'exécution locale:", e);
-        rep = e.message || "Cette action n'a pas pu être effectuée.";
+      let reussie = false; // une vraie commande d'action, exécutée sans erreur
+      if (intentionLocale.action && intentionLocale.action !== "aucune") {
+        try { extra = execute(intentionLocale.action, intentionLocale.params || {}); reussie = true; }
+        catch (e) {
+          console.error("[Assistant] ❌ Échec de l'exécution locale:", e);
+          rep = e.message || "Cette action n'a pas pu être effectuée.";
+        }
       }
-      setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]); speak(rep);
+      setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]);
+      // Fermeture automatique UNIQUEMENT après une commande d'action réussie ("enregistre le
+      // paiement…") — jamais après une simple question (la personne veut souvent enchaîner ou
+      // relire la réponse) ni après un échec (elle doit voir l'erreur pour la comprendre). La
+      // fermeture attend la fin de la phrase parlée, pour ne jamais couper la voix en plein mot.
+      speak(rep, reussie ? () => setOpen(false) : undefined);
       return; // terminé — aucun appel réseau
     }
 
@@ -4395,9 +4416,10 @@ Données actuelles : ${JSON.stringify(ctx)}`;
       }
       let rep = parsed.reponse || "C'est fait.";
       let extra = null;
+      let reussie = false; // une vraie commande d'action, exécutée sans erreur
       if (parsed.action && parsed.action !== "aucune") {
         console.log("[Assistant] 5/5 Exécution de l'action:", parsed.action, parsed.params || {});
-        try { extra = execute(parsed.action, parsed.params || {}); }
+        try { extra = execute(parsed.action, parsed.params || {}); reussie = true; }
         catch (e) {
           // L'IA avait annoncé un succès ("Paiement enregistré...") avant même que l'action ne
           // s'exécute réellement — si elle échoue (locataire introuvable, etc.), on ne doit
@@ -4408,7 +4430,10 @@ Données actuelles : ${JSON.stringify(ctx)}`;
       } else {
         console.log("[Assistant] 5/5 Aucune action à exécuter (réponse informative seulement).");
       }
-      setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]); speak(rep);
+      setLog((l) => [...l, { role: "ai", text: rep, ...(extra || {}) }]);
+      // Même règle que le chemin local : fermeture automatique seulement après une commande
+      // d'action réussie, jamais après une question ou un échec — voir le commentaire plus haut.
+      speak(rep, reussie ? () => setOpen(false) : undefined);
     } catch (e) {
       // Le détail technique va dans les logs (pour le débogage), JAMAIS à l'écran : l'utilisateur
       // reçoit un message clair et actionnable, et surtout un rappel que les commandes directes
