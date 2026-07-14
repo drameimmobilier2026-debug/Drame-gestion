@@ -489,18 +489,65 @@ function useCountUp(target, dur = 850) {
   }, [target]);
   return v;
 }
+/* Détecte un appareil tactile. Sert à NE PAS MONTER DU TOUT les graphiques SVG sur mobile :
+   ils ne sont pas simplement masqués, ils ne sont jamais créés. Aucun SVG, aucune texture GPU,
+   aucun ResizeObserver (qui se redéclenche à chaque fois que la barre d'adresse d'Android se
+   replie pendant le défilement, provoquant une vague de redessins). */
+function useTactile() {
+  const requete = "(hover: none) and (pointer: coarse)";
+  const [tactile, setTactile] = useState(() => typeof window !== "undefined" && window.matchMedia(requete).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(requete);
+    const surChangement = (e) => setTactile(e.matches);
+    mq.addEventListener?.("change", surChangement);
+    return () => mq.removeEventListener?.("change", surChangement);
+  }, []);
+  return tactile;
+}
+
+/* Remplacement des graphiques sur mobile : de simples barres en div. Aucun SVG, aucun dégradé,
+   aucune opacité, aucune couche de composition — le navigateur ne dessine que des rectangles
+   pleins. Et sur un écran de téléphone, une liste chiffrée est de toute façon plus lisible
+   qu'un graphique comprimé. */
+function SerieBarres({ lignes, format, couleur = "bg-teal-600" }) {
+  const max = Math.max(1, ...lignes.map((l) => l.valeur));
+  return (
+    <div className="space-y-2.5">
+      {lignes.map((l) => (
+        <div key={l.label}>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xs font-medium text-slate-600">{l.label}</span>
+            <span className="font-display text-sm font-semibold tabular-nums text-slate-900">{format(l.valeur)}</span>
+          </div>
+          <div className="mt-1 h-2 rounded-full bg-slate-100">
+            <div className={`h-full rounded-full ${l.couleur || couleur}`} style={{ width: `${Math.max(2, (l.valeur / max) * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Ring({ pct, size = 116, stroke = 11, track = "rgba(255,255,255,0.22)", color = "#fff" }) {
   const r = (size - stroke) / 2, c = 2 * Math.PI * r, off = c * (1 - Math.min(100, pct) / 100);
+  // La rotation est appliquée en ATTRIBUT SVG (transform="rotate(...)"), et non via la classe CSS
+  // `-rotate-90`. La différence est essentielle : une transformation CSS force le navigateur à
+  // promouvoir l'élément en couche de composition GPU distincte, alors qu'un attribut SVG est une
+  // simple transformation géométrique, dessinée dans le même plan que le reste. Sur les GPU Android
+  // modestes, ces couches supplémentaires sont l'une des causes directes des déchirures observées.
   return (
-    <svg width={size} height={size} className="-rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} stroke={track} strokeWidth={stroke} fill="none" />
-      <circle cx={size / 2} cy={size / 2} r={r} stroke={color} strokeWidth={stroke} fill="none" strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{ transition: "stroke-dashoffset 1.1s cubic-bezier(.2,.8,.2,1)" }} />
+    <svg width={size} height={size}>
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        <circle cx={size / 2} cy={size / 2} r={r} stroke={track} strokeWidth={stroke} fill="none" />
+        <circle cx={size / 2} cy={size / 2} r={r} stroke={color} strokeWidth={stroke} fill="none" strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{ transition: "stroke-dashoffset 1.1s cubic-bezier(.2,.8,.2,1)" }} />
+      </g>
     </svg>
   );
 }
 
 /* ============================ Dashboard ============================ */
 function Dashboard({ data, go, isDark }) {
+  const tactile = useTactile(); // sur mobile : aucun graphique SVG n'est monté (voir plus bas)
   const gridColor = isDark ? "#334155" : "#f1f5f9";
   const tickColor = isDark ? "#94a3b8" : "#94a3b8";
   const axisColor = isDark ? "#64748b" : "#64748b";
@@ -645,7 +692,7 @@ function Dashboard({ data, go, isDark }) {
       {/* KPIs cliquables */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {kpis.map((k) => (
-          <button key={k.label} onClick={k.go} className="group rounded-2xl border border-slate-200/70 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md lg:p-5">
+          <button key={k.label} onClick={k.go} className="rounded-2xl border border-slate-200/70 bg-white p-4 text-left shadow-sm hover:bg-slate-50 lg:p-5">
             <div className="flex items-start justify-between">
               <span className="text-xs font-medium text-slate-500">{k.label}</span>
               <span className={`grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br shadow-sm ${k.grad}`}><k.icon size={15} className="text-white" /></span>
@@ -663,16 +710,24 @@ function Dashboard({ data, go, isDark }) {
             <h3 className="font-display text-base font-semibold text-slate-900">Encaissements par échéance</h3>
             <span className="text-xs text-slate-400">6 dernières échéances</span>
           </div>
-          <Suspense fallback={<ChargementGraphique hauteur={230} />}>
-            <GraphiqueEncaissements serie={serie} isDark={isDark} money={money} gridColor={gridColor} tickColor={tickColor} />
-          </Suspense>
+          {tactile ? (
+            <SerieBarres lignes={serie.map((s) => ({ label: s.mois, valeur: s.montant }))} format={moneyC} />
+          ) : (
+            <Suspense fallback={<ChargementGraphique hauteur={230} />}>
+              <GraphiqueEncaissements serie={serie} isDark={isDark} money={money} gridColor={gridColor} tickColor={tickColor} />
+            </Suspense>
+          )}
         </div>
 
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
           <h3 className="mb-3 font-display text-base font-semibold text-slate-900">Loyers par immeuble</h3>
-          <Suspense fallback={<ChargementGraphique hauteur={230} />}>
-            <GraphiqueParImmeuble parImmeuble={parImmeuble} isDark={isDark} money={money} axisColor={axisColor} />
-          </Suspense>
+          {tactile ? (
+            <SerieBarres lignes={parImmeuble.map((im, i) => ({ label: im.nom, valeur: im.potentiel, couleur: i === 0 ? "bg-indigo-500" : "bg-cyan-500" }))} format={moneyC} />
+          ) : (
+            <Suspense fallback={<ChargementGraphique hauteur={230} />}>
+              <GraphiqueParImmeuble parImmeuble={parImmeuble} isDark={isDark} money={money} axisColor={axisColor} />
+            </Suspense>
+          )}
           <div className="mt-1 flex flex-col gap-1 text-xs text-slate-500">
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-indigo-500" />{imAvance?.nom} · avance</span>
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-cyan-500" />{imEchu?.nom} · échu</span>
@@ -3503,6 +3558,7 @@ function MesCommissions({ data, setData, go, isDark }) {
 
 /* ============================ Rapports ============================ */
 function Rapports({ data, isDark, go }) {
+  const tactile = useTactile(); // sur mobile : aucun graphique SVG monté
   const gridColor = isDark ? "#334155" : "#f1f5f9";
   const tickColor = "#94a3b8";
   const tooltipStyle = { borderRadius: 12, border: `1px solid ${isDark ? "#334155" : "#e2e8f0"}`, fontSize: 12, background: isDark ? "#1e293b" : "#fff", color: isDark ? "#f1f5f9" : "#0f172a" };
@@ -3567,9 +3623,19 @@ function Rapports({ data, isDark, go }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm lg:col-span-2">
           <h3 className="mb-4 font-display text-base font-semibold text-slate-900">Revenus, dépenses & net</h3>
-          <Suspense fallback={<ChargementGraphique hauteur={260} />}>
-            <GraphiqueRevenusDepenses serie={serie} isDark={isDark} money={money} gridColor={gridColor} tickColor={tickColor} />
-          </Suspense>
+          {tactile ? (
+            <div className="space-y-4">
+              <SerieBarres lignes={serie.map((s) => ({ label: s.mois, valeur: s.enc }))} format={moneyC} couleur="bg-teal-700" />
+              <div className="border-t border-slate-100 pt-3">
+                <p className="mb-2 text-xs font-semibold text-slate-500">Dépenses</p>
+                <SerieBarres lignes={serie.map((s) => ({ label: s.mois, valeur: s.dep }))} format={moneyC} couleur="bg-rose-400" />
+              </div>
+            </div>
+          ) : (
+            <Suspense fallback={<ChargementGraphique hauteur={260} />}>
+              <GraphiqueRevenusDepenses serie={serie} isDark={isDark} money={money} gridColor={gridColor} tickColor={tickColor} />
+            </Suspense>
+          )}
           <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-slate-500">
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-teal-700" />Encaissé</span>
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-400" />Dépenses</span>
@@ -4391,7 +4457,7 @@ Données actuelles : ${JSON.stringify(ctx)}`;
             </div>
             <div className="flex shrink-0 items-center gap-2.5 border-t border-slate-100 p-3">
               <input className="min-w-0 flex-1 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-violet-400 focus:bg-white" placeholder={supported ? "Écrire ou parler…" : "Écrire une demande…"} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask(text)} />
-              {supported && <button onClick={listening ? stopListen : startListen} title={listening ? "Arrêter l'écoute" : "Parler à l'assistant"} className={`grid h-12 w-12 shrink-0 place-items-center rounded-full text-white shadow-md transition active:scale-95 ${listening ? "animate-pulse bg-rose-500 shadow-rose-500/40" : "bg-gradient-to-br from-violet-600 to-indigo-600 shadow-violet-500/40 hover:scale-105"}`}><Mic size={22} /></button>}
+              {supported && <button onClick={listening ? stopListen : startListen} title={listening ? "Arrêter l'écoute" : "Parler à l'assistant"} className={`grid h-12 w-12 shrink-0 place-items-center rounded-full text-white ${listening ? "bg-rose-500" : "bg-violet-600"}`}><Mic size={22} /></button>}
               <button onClick={() => ask(text)} title="Envoyer" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-900 text-white hover:bg-slate-700"><Send size={16} /></button>
             </div>
             {!supported && <p className="shrink-0 px-4 pb-3 text-[11px] text-slate-400">Saisie vocale : Chrome ou Edge. La saisie texte fonctionne partout.</p>}
