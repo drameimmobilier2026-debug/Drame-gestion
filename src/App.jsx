@@ -1165,45 +1165,50 @@ function Locaux({ data, setData, go }) {
   const [filtreIm, setFiltreIm] = useState("all");
   const list = data.locaux.filter((l) => filtreIm === "all" || l.immeubleId === filtreIm);
 
+  // Affichage par lot : voir le commentaire équivalent dans Locataires. Sur une liste de 15+
+  // locaux, ça réduit fortement le travail total de mise en page et de dessin du navigateur.
+  const [visibles, setVisibles] = useState(8);
+  const listeAffichee = list.slice(0, visibles);
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <select className={`${inputCls} w-auto`} value={filtreIm} onChange={(e) => setFiltreIm(e.target.value)}>
+        <select className={`${inputCls} w-auto`} value={filtreIm} onChange={(e) => { setFiltreIm(e.target.value); setVisibles(8); }}>
           <option value="all">Tous les immeubles</option>
           {data.immeubles.map((im) => <option key={im.id} value={im.id}>{im.nom}</option>)}
         </select>
         <PrimaryBtn onClick={() => open(null)}><Plus size={16} /> Ajouter un local</PrimaryBtn>
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {list.map((l) => {
+      <div className="space-y-2">
+        {listeAffichee.map((l) => {
           const t = occupant(l.id);
           return (
-            <div key={l.id} className="rounded-2xl border border-slate-200/70 bg-white p-5">
-              <button onClick={() => go("local", l.id)} className="block w-full text-left">
-                <div className="flex items-start justify-between">
-                  <div className="rounded-xl bg-slate-100 p-2.5"><DoorOpen size={20} className="text-slate-500" /></div>
-                  <Badge statut={l.statut} />
+            <div key={l.id} className="flex items-center gap-3 rounded-xl border border-slate-200/70 bg-white p-3">
+              <button onClick={() => go("local", l.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100"><DoorOpen size={16} className="text-slate-500" /></div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="truncate text-sm font-semibold text-slate-900">{l.nom}</h3>
+                    {l.bloc && <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-slate-500">Bloc {l.bloc}</span>}
+                    <Badge statut={l.statut} />
+                  </div>
+                  <p className="truncate text-xs text-slate-400">{imNom(l.immeubleId)} · {t ? `${t.prenom} ${t.nom}` : "Vacant"}</p>
                 </div>
-                <h3 className="mt-3 flex items-center gap-2 font-display font-semibold text-slate-900">{l.nom}{l.bloc && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">Bloc {l.bloc}</span>}</h3>
-                <p className="text-xs text-slate-400">{imNom(l.immeubleId)}</p>
-                <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                  <span>{l.type}</span>
-                  {l.pieces ? <><span className="text-slate-300">·</span><span>{l.pieces} chambre{l.pieces > 1 ? "s" : ""}</span></> : null}
-                  {l.surface ? <><span className="text-slate-300">·</span><span>{l.surface} m²</span></> : null}
-                </div>
-                <p className="mt-2 text-xs text-slate-500">{t ? `Occupé par ${t.prenom} ${t.nom}` : "Aucun locataire"}</p>
               </button>
-              <div className="mt-4 flex items-end justify-between border-t border-slate-100 pt-3">
-                <span className="font-display text-lg font-semibold tabular-nums text-slate-900">{money(l.loyer + (l.charges || 0))}</span>
-                <div className="flex gap-1">
-                  <button onClick={() => open(l)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
-                  <button onClick={() => del(l.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
-                </div>
+              <span className="shrink-0 font-display text-sm font-semibold tabular-nums text-slate-900">{money(l.loyer + (l.charges || 0))}</span>
+              <div className="flex shrink-0 gap-0.5">
+                <button onClick={() => open(l)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={14} /></button>
+                <button onClick={() => del(l.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={14} /></button>
               </div>
             </div>
           );
         })}
       </div>
+      {visibles < list.length && (
+        <button onClick={() => setVisibles((v) => v + 8)} className="mt-3 w-full rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-sm font-medium text-slate-500 hover:bg-slate-50">
+          Voir {Math.min(8, list.length - visibles)} de plus ({list.length - visibles} restant{list.length - visibles > 1 ? "s" : ""})
+        </button>
+      )}
       <Modal open={!!edit} onClose={() => setEdit(null)} title={edit === "new" ? "Nouveau local" : "Modifier le local"} wide>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Immeuble"><select className={inputCls} value={form.immeubleId} onChange={(e) => setForm({ ...form, immeubleId: e.target.value })}>{data.immeubles.map((im) => <option key={im.id} value={im.id}>{im.nom}</option>)}</select></Field>
@@ -1325,16 +1330,18 @@ function Locataires({ data, setData, go }) {
   const initial = edit && edit !== "new" ? data.locataires.find((x) => x.id === edit) : blankLocataire;
   const del = (id) => delLocataire(setData, id);
   const localNom = (id) => data.locaux.find((x) => x.id === id)?.nom;
-  // Ordre d'affichage : par numéro de local (A21, A22… B10… C1… puis Étage, R20…),
-  // calculé dynamiquement pour rester correct même après un ajout/modif via l'app.
-  // Les locataires sans local sont renvoyés à la fin.
   const rangLocal = (t) => { const l = data.locaux.find((x) => x.id === t.localId); return l ? l.nom.toLowerCase() : "zzz"; };
-  // Mémorisé : le tri (avec localeCompare, coûteux) ne se recalcule que si les locataires ou
-  // les locaux changent réellement — plus à chaque frappe dans une modale ouverte, par exemple.
   const liste = useMemo(
     () => [...data.locataires].sort((a, b) => rangLocal(a).localeCompare(rangLocal(b), "fr", { numeric: true })),
     [data.locataires, data.locaux]
   );
+
+  // Affichage par lot : seuls les N premiers sont réellement présents dans la page (pas
+  // seulement masqués visuellement — ils n'existent pas dans le DOM tant qu'on ne les révèle
+  // pas). Sur une liste de 15+ cartes, ça réduit fortement le travail total de mise en page et
+  // de dessin du navigateur pour l'affichage initial, celui que l'on consulte le plus souvent.
+  const [visibles, setVisibles] = useState(8);
+  const listeAffichee = liste.slice(0, visibles);
 
   return (
     <div>
@@ -1342,26 +1349,28 @@ function Locataires({ data, setData, go }) {
         <p className="text-sm text-slate-500">{data.locataires.length} locataire(s)</p>
         <PrimaryBtn onClick={() => open(null)}><Plus size={16} /> Ajouter un locataire</PrimaryBtn>
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {liste.map((t) => (
-          <div key={t.id} className="rounded-2xl border border-slate-200/70 bg-white p-5">
-            <button onClick={() => go("locataire", t.id)} className="block w-full text-left">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-teal-600 font-display text-sm font-semibold text-white">{initials(t)}</div>
-                <div className="min-w-0"><h3 className="truncate font-display font-semibold text-slate-900">{t.prenom} {t.nom}</h3><p className="truncate text-xs text-slate-400">{localNom(t.localId) || "Sans local"}</p></div>
-              </div>
-              <div className="mt-4 space-y-1.5 text-xs text-slate-500">
-                <p className="flex min-w-0 items-center gap-2"><Mail size={13} className="shrink-0 text-slate-400" /><span className="truncate">{t.email || "—"}</span></p>
-                <p className="flex min-w-0 items-center gap-2"><Phone size={13} className="shrink-0 text-slate-400" /><span className="truncate">{t.telephone || "—"}</span></p>
+      <div className="space-y-2">
+        {listeAffichee.map((t) => (
+          <div key={t.id} className="flex items-center gap-2.5 rounded-xl border border-slate-200/70 bg-white p-3">
+            <button onClick={() => go("locataire", t.id)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal-600 font-display text-xs font-semibold text-white">{initials(t)}</div>
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-slate-900">{t.prenom} {t.nom}</h3>
+                <p className="truncate text-xs text-slate-400">{localNom(t.localId) || "Sans local"}{t.telephone ? ` · ${t.telephone}` : ""}</p>
               </div>
             </button>
-            <div className="mt-3 flex justify-end gap-1 border-t border-slate-100 pt-3">
-              <button onClick={() => open(t)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
-              <button onClick={() => del(t.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+            <div className="flex shrink-0 gap-0.5">
+              <button onClick={() => open(t)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={14} /></button>
+              <button onClick={() => del(t.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={14} /></button>
             </div>
           </div>
         ))}
       </div>
+      {visibles < liste.length && (
+        <button onClick={() => setVisibles((v) => v + 8)} className="mt-3 w-full rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-sm font-medium text-slate-500 hover:bg-slate-50">
+          Voir {Math.min(8, liste.length - visibles)} de plus ({liste.length - visibles} restant{liste.length - visibles > 1 ? "s" : ""})
+        </button>
+      )}
       <LocataireFormModal open={!!edit} editId={edit} initial={initial} data={data} setData={setData} onClose={() => setEdit(null)} />
     </div>
   );
