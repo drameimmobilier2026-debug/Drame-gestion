@@ -132,6 +132,19 @@ const montantEnLettres = (n) => `${cap(nombreEnLettres(n))} franc${n > 1 ? "s" :
 // Signature utilisée dans les messages de confirmation de paiement envoyés aux locataires —
 // dérivée du nom du gestionnaire (Paramètres) plutôt que figée, pour rester à jour si ça change.
 const signatureGestionnaire = (data) => `Le Gestionnaire Mr ${(data.parametres?.gestionnaire || "Sanoussy DRAMÉ").trim().split(" ").pop()}`;
+// Signature complète pour les documents remis au locataire (quittances) : nom de famille
+// d'abord, suivi du prénom, plus le téléphone du gestionnaire — contrairement à
+// signatureGestionnaire() ci-dessus (forme courte, utilisée telle quelle dans les messages
+// WhatsApp). Le repli sur l'ancien placeholder gère les données déjà en ligne, créées avant
+// que ce champ ne soit rattaché à un vrai numéro.
+function signatureGestionnaireComplete(data) {
+  const mots = (data.parametres?.gestionnaire || "Sanoussy DRAMÉ").trim().split(" ");
+  const nom = mots.pop();
+  const prenom = mots.join(" ");
+  const brut = data.parametres?.telephone;
+  const telephone = brut && brut !== "+224 620 00 00 00" ? brut : "+224622452698";
+  return { nom: `Le Gestionnaire Mr ${nom}${prenom ? " " + prenom : ""}.`, telephone: `Téléphone : ${telephone}` };
+}
 // Arriérés d'un locataire (autres loyers impayés que celui de la quittance en cours),
 // pour avertir dans le message/PDF plutôt que de laisser croire qu'il est à jour.
 function arrieresLocataire(data, locataireId, excludePaiementId) {
@@ -368,7 +381,7 @@ function seed() {
   const documents = [];
   const versements = [];
   const consommations = []; // ce que le gestionnaire a dépensé de ses commissions
-  const parametres = { societe: "Gérance Damakania", gerant: "Administrateur", email: "gerant@drame-gestion.gn", telephone: "+224 620 00 00 00", devise: "GNF", gestionnaire: "Sanoussy DRAMÉ", proprietaire: "Elhadj Ousmane MAGASSOUBA", proprietaireTelephone: "", commissionPct: 0, theme: "system", rappelGeneral: TPL_GENERAL, rappelRetard: TPL_RETARD };
+  const parametres = { societe: "Gérance Damakania", gerant: "Administrateur", email: "gerant@drame-gestion.gn", telephone: "+224622452698", devise: "GNF", gestionnaire: "Sanoussy DRAMÉ", proprietaire: "Elhadj Ousmane MAGASSOUBA", proprietaireTelephone: "", commissionPct: 0, theme: "system", rappelGeneral: TPL_GENERAL, rappelRetard: TPL_RETARD };
   const rappels = [];
   return { immeubles, locaux, locataires, paiements, depenses, documents, parametres, versements, rappels, consommations };
 }
@@ -784,7 +797,7 @@ function genererQuittancePdf(paiement, data) {
   const localNom = data.locaux.find((x) => x.id === paiement.localId)?.nom || "—";
   const imNom = data.immeubles.find((x) => x.id === paiement.immeubleId)?.nom || "—";
   const societe = data.parametres?.societe || "DRAMÉ Gestion";
-  const signature = signatureGestionnaire(data);
+  const signatureComplete = signatureGestionnaireComplete(data);
   const ref = `Q-${paiement.mois.replace("-", "")}-${paiement.id.slice(-4).toUpperCase()}`;
   const { total: totalArrieres, mois: moisArrieres, lignes: arrieres } = arrieresLocataire(data, paiement.locataireId, paiement.id);
   const decalage = arrieres.length > 0 ? 34 : 0;
@@ -807,14 +820,15 @@ function genererQuittancePdf(paiement, data) {
   ];
   if (arrieres.length > 0) {
     ops.push({ type: "rect", x: 50, y: 495, w: 495, h: 24, color: [0.996, 0.95, 0.78] });
-    ops.push({ type: "text", x: 60, y: 511, size: 9, font: "B", color: [0.6, 0.4, 0.02], text: `Arriéré en cours : ${money(totalArrieres)}` });
+    ops.push({ type: "text", x: 60, y: 511, size: 9, font: "B", color: [0.6, 0.4, 0.02], text: `Arriéré en cours : ${money(totalArrieres)} (${arrieres.length} mois)` });
     ops.push({ type: "text", x: 60, y: 500, size: 8, font: "R", color: [0.55, 0.4, 0.1], text: `Loyer(s) impayé(s) : ${moisArrieres}` });
   }
   ops.push(
     { type: "line", x1: 50, y1: 495 - decalage, x2: 545, y2: 495 - decalage, color: [0.75, 0.75, 0.75], width: 1, dash: [3, 3] },
-    { type: "text", x: 50, y: 472 - decalage, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: "Le bailleur reconnaît avoir reçu la somme ci-dessus au titre du loyer et des" },
-    { type: "text", x: 50, y: 460 - decalage, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: "charges pour la période mentionnée, et en donne quittance sans réserve." },
-    { type: "text", x: 50, y: 435 - decalage, size: 9, font: "B", color: [0.2, 0.2, 0.2], text: signature },
+    { type: "text", x: 50, y: 472 - decalage, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: "Le bailleur reconnaît avoir reçu la somme indiquée ci-dessus au titre du" },
+    { type: "text", x: 50, y: 460 - decalage, size: 9, font: "R", color: [0.45, 0.45, 0.45], text: "loyer pour la période mentionnée, et en donne quittance sans réserve." },
+    { type: "text", x: 50, y: 435 - decalage, size: 9, font: "B", color: [0.2, 0.2, 0.2], text: signatureComplete.nom },
+    { type: "text", x: 50, y: 422 - decalage, size: 8, font: "R", color: [0.45, 0.45, 0.45], text: signatureComplete.telephone },
   );
   return { bytes: buildPdfBytes({ ops }), fichier: `${ref}.pdf`, ref };
 }
@@ -829,7 +843,7 @@ function QuittanceModal({ paiement, data, onClose, go }) {
     <Modal open={!!paiement} onClose={onClose} title="Quittance de loyer">
       {paiement && (() => {
         const t = tenant(paiement.locataireId);
-        const signature = signatureGestionnaire(data);
+        const signatureComplete = signatureGestionnaireComplete(data);
         // Autres loyers impayés de ce même locataire (arriérés), à part le paiement de cette quittance.
         const { lignes: arrieres, total: totalArrieres, mois: moisArrieres, note: noteArrieres } = arrieresLocataire(data, paiement.locataireId, paiement.id);
         const message = `Bonjour ${nom(paiement.locataireId)}, voici la confirmation de réception de votre loyer pour ${moisLong(paiement.mois)} : ${money(paiement.montant)} (local ${localNom(paiement.localId)}), payé le ${paiement.datePaiement}.${noteArrieres} Merci ! — ${signature}`;
@@ -872,7 +886,7 @@ function QuittanceModal({ paiement, data, onClose, go }) {
 
                 {arrieres.length > 0 && (
                   <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                    <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-700"><AlertTriangle size={13} /> Arriéré en cours</p>
+                    <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-700"><AlertTriangle size={13} /> Arriéré en cours — {arrieres.length} mois</p>
                     <p className="mt-1 font-display text-base font-semibold tabular-nums text-amber-800">{money(totalArrieres)}</p>
                     <p className="mt-0.5 text-xs text-amber-700">Loyer(s) impayé(s) : {moisArrieres}</p>
                   </div>
@@ -887,8 +901,9 @@ function QuittanceModal({ paiement, data, onClose, go }) {
 
                 <div className="my-5 border-t border-dashed border-slate-300" />
 
-                <p className="text-xs leading-relaxed text-slate-500">Le bailleur reconnaît avoir reçu la somme indiquée ci-dessus au titre du loyer et des charges pour la période mentionnée, et en donne quittance sans réserve.</p>
-                <p className="mt-3 text-xs font-semibold text-slate-700">{signature}</p>
+                <p className="text-xs leading-relaxed text-slate-500">Le bailleur reconnaît avoir reçu la somme indiquée ci-dessus au titre du loyer pour la période mentionnée, et en donne quittance sans réserve.</p>
+                <p className="mt-3 text-xs font-semibold text-slate-700">{signatureComplete.nom}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{signatureComplete.telephone}</p>
               </div>
             </div>
             <div className="no-print mt-4 flex flex-wrap justify-end gap-2">
@@ -3915,7 +3930,7 @@ function Parametres({ data, setData, resetDemo, theme, setTheme, go }) {
           <Field label="Société / gérance"><input className={inputCls} value={form.societe} onChange={(e) => setForm({ ...form, societe: e.target.value })} /></Field>
           <Field label="Gérant"><input className={inputCls} value={form.gerant} onChange={(e) => setForm({ ...form, gerant: e.target.value })} /></Field>
           <Field label="Email"><input className={inputCls} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label="Téléphone"><input className={inputCls} value={form.telephone} onChange={(e) => setForm({ ...form, telephone: e.target.value })} /></Field>
+          <Field label="Téléphone (apparaît sur les quittances)"><input className={inputCls} value={form.telephone} onChange={(e) => setForm({ ...form, telephone: e.target.value })} /></Field>
         </div>
         <div className="mt-4 flex items-center gap-3">
           <PrimaryBtn onClick={save}>Enregistrer</PrimaryBtn>
